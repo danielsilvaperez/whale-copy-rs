@@ -21,10 +21,13 @@ send_telegram_alert() {
     return 0
   fi
 
+  local escaped_message
+  escaped_message=$(printf '%s' "$message" | jq -Rs .)
+  
   curl -sS --max-time 6 \
     -H 'content-type: application/json' \
-    -d "{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":\"${message}\"}" \
-    "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" >/dev/null || true
+    -d "{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":${escaped_message}}" \
+    "" >/dev/null || true
 }
 
 service_active() {
