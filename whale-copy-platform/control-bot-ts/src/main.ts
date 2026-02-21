@@ -90,7 +90,21 @@ async function run(): Promise<void> {
   let notifierPrimed = false;
   const seenEventIds = new Set<string>();
 
-  await telegram.sendMessage(primaryChatId, "whale-copy control bot started");
+  let startupMessage = "whale-copy control bot started";
+  try {
+    const status = await rpc.request("get_status", {});
+    const s = status as { health?: { mode?: string; paused?: boolean; tracked_wallet_count?: number } };
+    const h = s.health ?? {};
+    startupMessage = [
+      "whale-copy control bot started",
+      `engine mode: ${h.mode ?? "unknown"}`,
+      `paused: ${String(h.paused ?? "unknown")}`,
+      `tracked wallets: ${h.tracked_wallet_count ?? "unknown"}`,
+    ].join("\n");
+  } catch {
+    startupMessage += " (engine not reachable yet)";
+  }
+  await telegram.sendMessage(primaryChatId, startupMessage);
 
   setInterval(async () => {
     try {

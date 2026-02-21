@@ -154,6 +154,11 @@ async fn signal_loop(ctx: AppContext, client: Client) -> Result<()> {
     loop {
         interval.tick().await;
 
+        {
+            let mut state = ctx.state.write().await;
+            state.maybe_reset_daily_notional();
+        }
+
         let wallets = {
             let state = ctx.state.read().await;
             state.tracked_wallets.iter().cloned().collect::<Vec<_>>()
@@ -231,6 +236,29 @@ async fn process_fill_event(ctx: &AppContext, client: &Client, fill_event: Sourc
         });
         ctx.db
             .insert_risk_event(Some(&fill_event.execution_id), "block", "trading_paused", &payload)
+            .await?;
+
+        record_event(
+            ctx,
+            EventClass::Risk,
+            "signal_blocked",
+            payload,
+            Some(&fill_event.execution_id),
+            Some(&fill_event.source_wallet),
+            Some(&fill_event.market_slug),
+        )
+        .await?;
+
+        return Ok(());
+    }
+
+    if !settings.copy_sells && matches!(fill_event.side, TradeSide::Sell) {
+        let payload = json!({
+            "execution_id": fill_event.execution_id,
+            "reason": "copy_sells_disabled",
+        });
+        ctx.db
+            .insert_risk_event(Some(&fill_event.execution_id), "block", "copy_sells_disabled", &payload)
             .await?;
 
         record_event(

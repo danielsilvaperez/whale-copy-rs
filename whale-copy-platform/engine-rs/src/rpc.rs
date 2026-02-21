@@ -87,6 +87,11 @@ struct SetFollowerEquityParams {
     follower_equity_usd: f64,
 }
 
+#[derive(Debug, Deserialize)]
+struct SetCopySellsParams {
+    copy_sells: bool,
+}
+
 pub async fn run_rpc_server(ctx: AppContext) -> Result<()> {
     let socket_path = ctx.config.socket_path.clone();
     if Path::new(&socket_path).exists() {
@@ -427,6 +432,36 @@ async fn process_rpc_method(
 
             Ok((
                 json!({ "follower_equity_usd": settings_snapshot.follower_equity_usd }),
+                Some(AuditRecord {
+                    command: method.to_string(),
+                    old_value: Some(old_value),
+                    new_value: Some(new_value),
+                    result: "ok".to_string(),
+                    actor_chat_id: req.actor_chat_id,
+                }),
+            ))
+        }
+        "set_copy_sells" => {
+            let params: SetCopySellsParams = parse_params(req.params)?;
+
+            let (old_value, new_value, settings_snapshot, event) = {
+                let mut state = ctx.state.write().await;
+                let old_value = json!({ "copy_sells": state.settings.copy_sells });
+                state.settings.copy_sells = params.copy_sells;
+                let new_value = json!({ "copy_sells": state.settings.copy_sells });
+                let event = state.push_event(
+                    EventClass::Info,
+                    "copy_sells_changed",
+                    new_value.clone(),
+                );
+                (old_value, new_value, state.settings.clone(), event)
+            };
+
+            ctx.db.save_runtime_settings(&settings_snapshot).await?;
+            ctx.db.insert_event(&event, None, None, None).await?;
+
+            Ok((
+                json!({ "copy_sells": settings_snapshot.copy_sells }),
                 Some(AuditRecord {
                     command: method.to_string(),
                     old_value: Some(old_value),

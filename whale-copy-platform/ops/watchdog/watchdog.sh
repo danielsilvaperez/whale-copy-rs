@@ -27,7 +27,7 @@ send_telegram_alert() {
   curl -sS --max-time 6 \
     -H 'content-type: application/json' \
     -d "{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":${escaped_message}}" \
-    "" >/dev/null || true
+    "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" >/dev/null || true
 }
 
 service_active() {

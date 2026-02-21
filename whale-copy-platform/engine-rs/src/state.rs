@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
-use chrono::Utc;
+use chrono::{NaiveDate, Utc};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -52,6 +52,7 @@ pub struct EngineState {
     pub market_exposure_usd: HashMap<String, f64>,
     pub last_heartbeat_at: chrono::DateTime<chrono::Utc>,
     pub last_rotation_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub current_trading_day: NaiveDate,
 }
 
 impl EngineState {
@@ -67,6 +68,7 @@ impl EngineState {
             market_exposure_usd: HashMap::new(),
             last_heartbeat_at: Utc::now(),
             last_rotation_at: None,
+            current_trading_day: Utc::now().date_naive(),
         }
     }
 
@@ -85,6 +87,20 @@ impl EngineState {
         }
 
         event
+    }
+
+    pub fn maybe_reset_daily_notional(&mut self) {
+        let today = Utc::now().date_naive();
+        if today != self.current_trading_day {
+            tracing::info!(
+                old_day = %self.current_trading_day,
+                new_day = %today,
+                reset_amount = self.daily_notional_usd,
+                "daily notional counter reset"
+            );
+            self.daily_notional_usd = 0.0;
+            self.current_trading_day = today;
+        }
     }
 
     pub fn health_snapshot(&self) -> EngineHealthSnapshot {

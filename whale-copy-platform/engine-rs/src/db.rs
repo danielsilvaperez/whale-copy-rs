@@ -612,16 +612,17 @@ fn parse_suggestion_status(value: &str) -> SuggestionStatus {
     }
 }
 
-fn parse_ts(value: &str) -> Result<DateTime<Utc>> {
+fn parse_ts(value: &str) -> DateTime<Utc> {
     if let Ok(ts) = DateTime::parse_from_rfc3339(value) {
-        return Ok(ts.with_timezone(&Utc));
+        return ts.with_timezone(&Utc);
     }
 
     if let Ok(naive) = NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S") {
-        return Ok(DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc));
+        return DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
     }
 
-    anyhow::bail!("unparseable timestamp format: {}", value)
+    tracing::warn!(raw = %value, "unparseable timestamp, falling back to Utc::now()");
+    Utc::now()
 }
 
 #[cfg(test)]

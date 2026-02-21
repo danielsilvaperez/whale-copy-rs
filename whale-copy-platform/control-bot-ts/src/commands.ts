@@ -113,6 +113,8 @@ function helpText(): string {
     "/risk <conservative|balanced|aggressive>",
     "/multiplier <number>",
     "/caps key=value [key=value ...]",
+    "/equity <usd-amount>",
+    "/copy_sells <on|off>",
     "/wallet_add <address>",
     "/wallet_remove <address>",
     "/wallet_list",
@@ -234,6 +236,22 @@ export async function handleCommand(
       }
       const value = await rpc.request("reject_suggestion", { id }, chatId);
       return `Suggestion rejected: ${JSON.stringify(value)}`;
+    }
+    case "equity": {
+      const equity = Number(args[0]);
+      if (!Number.isFinite(equity) || equity <= 0) {
+        return "Usage: /equity <positive-number>";
+      }
+      const value = await rpc.request("set_follower_equity", { follower_equity_usd: equity }, chatId);
+      return `Follower equity updated: ${JSON.stringify(value)}`;
+    }
+    case "copy_sells": {
+      const toggle = args[0]?.toLowerCase();
+      if (toggle !== "on" && toggle !== "off") {
+        return "Usage: /copy_sells <on|off>";
+      }
+      const value = await rpc.request("set_copy_sells", { copy_sells: toggle === "on" }, chatId);
+      return `Copy sells updated: ${JSON.stringify(value)}`;
     }
     case "logs": {
       const limitRaw = Number(args[0]);
