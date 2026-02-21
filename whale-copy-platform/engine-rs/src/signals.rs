@@ -466,10 +466,14 @@ pub fn parse_source_fill_events(
             .unwrap_or(fallback_source_equity_usd)
             .max(1.0);
 
-        let expected_edge_bps = field_f64(item, &["expected_edge_bps", "edge_bps", "alpha_bps"]) 
+        const EDGE_FALLBACK_MONEYNESS_CENTER: f64 = 0.5;
+        const EDGE_FALLBACK_MONEYNESS_MULTIPLIER: f64 = 1.5;
+        const EDGE_FALLBACK_MIN_BPS: f64 = 12.0;
+
+        let expected_edge_bps = field_f64(item, &["expected_edge_bps", "edge_bps", "alpha_bps"])
             .unwrap_or_else(|| {
-                let moneyness = (0.5 - source_price).abs() * 100.0;
-                (moneyness * 1.5).max(12.0)
+                let moneyness = (EDGE_FALLBACK_MONEYNESS_CENTER - source_price).abs() * 100.0;
+                (moneyness * EDGE_FALLBACK_MONEYNESS_MULTIPLIER).max(EDGE_FALLBACK_MIN_BPS)
             });
 
         let side = match field_str(item, &["side", "intent", "direction"])
