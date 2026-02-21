@@ -78,7 +78,7 @@ heartbeat_is_fresh() {
   fi
 
   local age
-  age="$(sqlite3 "$ENGINE_DB_PATH" "SELECT CAST(strftime('%s','now') - strftime('%s', updated_at) AS INTEGER) FROM service_heartbeats WHERE service='${service_name}' LIMIT 1;" 2>/dev/null || true)"
+  age="$(sqlite3 "$ENGINE_DB_PATH" "SELECT CAST(strftime('%s','now') - strftime('%s', updated_at) AS INTEGER) FROM service_heartbeats WHERE service=? LIMIT 1;" "${service_name}" 2>/dev/null || true)"
 
   if [[ -z "$age" ]]; then
     return 1
