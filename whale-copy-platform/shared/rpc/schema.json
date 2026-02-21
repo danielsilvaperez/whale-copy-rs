@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Whale Copy Engine RPC",
+  "type": "object",
+  "description": "JSON-over-UNIX-socket RPC envelope. One request per line.",
+  "properties": {
+    "method": { "type": "string" },
+    "params": { "type": "object" },
+    "actor_chat_id": { "type": ["string", "null"] },
+    "request_id": { "type": ["string", "null"] }
+  },
+  "required": ["method"],
+  "additionalProperties": true,
+  "x-methods": [
+    "ping",
+    "get_status",
+    "set_mode",
+    "set_risk_profile",
+    "set_multiplier",
+    "set_caps",
+    "add_wallet",
+    "remove_wallet",
+    "list_wallets",
+    "pause_trading",
+    "resume_trading",
+    "panic_close",
+    "ack_suggestion",
+    "reject_suggestion",
+    "tail_events",
+    "list_suggestions",
+    "report_heartbeat"
+  ]
+}

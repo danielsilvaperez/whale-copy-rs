@@ -1,0 +1,20 @@
+[Unit]
+Description=Whale Copy Platform Telegram Control Bot
+After=network-online.target whale-copy-engine.service
+Wants=network-online.target
+Requires=whale-copy-engine.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/whale-copy-platform/control-bot-ts
+EnvironmentFile=-/etc/whale-copy-platform/telegram.env
+ExecStart=/usr/bin/node /opt/whale-copy-platform/control-bot-ts/dist/main.js
+Restart=always
+RestartSec=2
+TimeoutStopSec=15
+KillSignal=SIGINT
+NoNewPrivileges=true
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
