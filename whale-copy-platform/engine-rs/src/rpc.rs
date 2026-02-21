@@ -101,6 +101,15 @@ pub async fn run_rpc_server(ctx: AppContext) -> Result<()> {
 
     let listener = UnixListener::bind(&socket_path)
         .with_context(|| format!("binding unix socket at {}", socket_path))?;
+    
+    // Restrict socket permissions to owner only
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&socket_path)?.permissions();
+        perms.set_mode(0o600);
+        std::fs::set_permissions(&socket_path, perms)?;
+    }
 
     tracing::info!(socket_path = %socket_path, "rpc listener started");
 
