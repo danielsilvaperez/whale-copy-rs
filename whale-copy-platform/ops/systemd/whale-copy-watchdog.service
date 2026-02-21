@@ -1,0 +1,16 @@
+[Unit]
+Description=Whale Copy Platform Watchdog
+After=whale-copy-engine.service whale-copy-telegram.service
+Requires=whale-copy-engine.service whale-copy-telegram.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/whale-copy-platform
+EnvironmentFile=-/etc/whale-copy-platform/watchdog.env
+ExecStart=/opt/whale-copy-platform/ops/watchdog/watchdog.sh
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

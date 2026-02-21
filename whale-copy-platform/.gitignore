@@ -1,0 +1,19 @@
+# Rust
+engine-rs/target/
+
+# Node
+control-bot-ts/node_modules/
+control-bot-ts/dist/
+
+# Runtime
+data/
+logs/
+*.log
+*.db
+*.db-shm
+*.db-wal
+*.sock
+
+# Local env
+.env
+.env.local
