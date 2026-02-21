@@ -64,12 +64,14 @@ async function processUpdates(
       const trimmed = reply.length > 3800 ? `${reply.slice(0, 3800)}\n...truncated` : reply;
       await telegram.sendMessage(chatId, trimmed);
     } catch (error) {
-      const messageText = `Command failed: ${(error as Error).message}`;
+      const errorMsg = (error as Error).message;
+      const safeMessage = errorMsg.length > 200 ? errorMsg.slice(0, 200) : errorMsg;
+      const messageText = `Command failed: ${safeMessage}`;
       await telegram.sendMessage(chatId, messageText);
       logJson("error", "command_failed", {
         chatId,
         command: message.text,
-        error: (error as Error).message,
+        error: errorMsg,
       });
     }
   }
