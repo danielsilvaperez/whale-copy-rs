@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "dev": "tsx src/main.ts",
-    "test": "tsx --test test/commandParser.test.ts"
+    "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.7"

@@ -821,6 +821,210 @@ mod tests {
     }
 
     #[test]
+    fn normalize_wallet_rejects_invalid_addresses() {
+        // Too short (5 chars total with 0x prefix)
+        assert!(normalize_wallet("0x123").is_none());
+        // Non-hex chars after 0x prefix (G is not hex)
+        assert!(normalize_wallet(&("0x".to_string() + &"G".repeat(40))).is_none());
+        // No 0x prefix and wrong length (39 chars → "0x" + 39 = 41 chars ≠ 42)
+        assert!(normalize_wallet(&"a".repeat(39)).is_none());
+        // Valid: 0x + exactly 40 hex chars
+        assert!(normalize_wallet(&("0x".to_string() + &"a".repeat(40))).is_some());
+    }
+
+    #[test]
+    fn score_wallet_formula_respects_weights() {
+        let now = Utc::now();
+
+        // All-perfect metrics → score should be ~100
+        // raw = 1.0*0.35 + 1.0*0.25 + 1.0*0.20 + 1.0*0.20 - 0.0*0.30 = 1.0
+        // confidence_multiplier = 0.5 + 1.0*0.5 = 1.0 → score = 100.0
+        let high = CandidateWalletMetrics {
+            wallet: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            pnl_consistency: 1.0,
+            win_rate: 1.0,
+            drawdown_penalty: 0.0,
+            recent_activity: 1.0,
+            fill_quality: 1.0,
+            confidence: 1.0,
+        };
+        let high_score = score_wallet(&high, now);
+        assert!(high_score.score > 90.0);
+
+        // High drawdown should reduce score compared to perfect performer
+        let risky = CandidateWalletMetrics {
+            wallet: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+            pnl_consistency: 0.5,
+            win_rate: 0.5,
+            drawdown_penalty: 1.0,
+            recent_activity: 0.5,
+            fill_quality: 0.5,
+            confidence: 0.5,
+        };
+        let risky_score = score_wallet(&risky, now);
+        assert!(risky_score.score < high_score.score);
+    }
+
+    #[test]
+    fn build_execution_intent_clamps_buy_price() {
+        // Buy: limit_price = min(source_price + offset, 0.999)
+        // With source_price=0.998, offset=0.01: min(1.008, 0.999) = 0.999
+        let signal = CopySignal {
+            execution_id: "test-buy".to_string(),
+            source_wallet: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            market_slug: "test-market".to_string(),
+            token_id: "test-token".to_string(),
+            side: TradeSide::Buy,
+            source_trade_notional_usd: 1_000.0,
+            source_price: 0.998,
+            copy_notional_usd: 1_000.0,
+            copy_quantity: 1_002.0,
+            expected_edge_bps: 200.0,
+            observed_at: Utc::now(),
+        };
+        let intent = build_execution_intent(&signal, &RuntimeSettings::default());
+        assert!(intent.limit_price <= 0.999);
+    }
+
+    #[test]
+    fn build_execution_intent_clamps_sell_price() {
+        // Sell: limit_price = max(source_price - offset, 0.001)
+        // With source_price=0.002, offset=0.01: max(-0.008, 0.001) = 0.001
+        let signal = CopySignal {
+            execution_id: "test-sell".to_string(),
+            source_wallet: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            market_slug: "test-market".to_string(),
+            token_id: "test-token".to_string(),
+            side: TradeSide::Sell,
+            source_trade_notional_usd: 1_000.0,
+            source_price: 0.002,
+            copy_notional_usd: 1_000.0,
+            copy_quantity: 500_000.0,
+            expected_edge_bps: 200.0,
+            observed_at: Utc::now(),
+        };
+        let intent = build_execution_intent(&signal, &RuntimeSettings::default());
+        assert!(intent.limit_price >= 0.001);
+    }
+
+    #[test]
+    fn evaluate_signal_blocks_on_open_positions_cap() {
+        let mut settings = RuntimeSettings::default();
+        settings.caps.max_open_positions = 5;
+
+        let signal = CopySignal {
+            execution_id: "test-cap".to_string(),
+            source_wallet: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            market_slug: "test-market".to_string(),
+            token_id: "test-token".to_string(),
+            side: TradeSide::Buy,
+            source_trade_notional_usd: 1_000.0,
+            source_price: 0.5,
+            copy_notional_usd: 100.0,
+            copy_quantity: 200.0,
+            expected_edge_bps: 200.0,
+            observed_at: Utc::now(),
+        };
+
+        // open_positions_count == max_open_positions → Block
+        let eval = evaluate_signal(&signal, &settings, 0.0, 0.0, 5);
+        assert!(matches!(eval.decision, RiskDecision::Block { .. }));
+    }
+
+    #[test]
+    fn rotation_suggestion_respects_cooldown() {
+        let now = Utc::now();
+        // last rotation was 30s ago, cooldown is 60s → should return None
+        let last = Some(now - ChronoDuration::seconds(30));
+
+        let tracked: BTreeSet<String> = BTreeSet::new();
+        let no_pending: BTreeMap<String, RotationSuggestion> = BTreeMap::new();
+        let mut scores = HashMap::new();
+        scores.insert(
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            WalletScore {
+                wallet: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                score: 90.0,
+                pnl_consistency: 0.9,
+                win_rate: 0.9,
+                drawdown_penalty: 0.1,
+                recent_activity: 0.9,
+                fill_quality: 0.9,
+                updated_at: now,
+            },
+        );
+
+        let result = maybe_create_rotation_suggestion(
+            &tracked,
+            &no_pending,
+            &scores,
+            5,
+            last,
+            now,
+            8.0,
+            50.0,
+            Duration::from_secs(60),
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn rotation_suggestion_blocks_when_pending_exists() {
+        let now = Utc::now();
+        let tracked: BTreeSet<String> = BTreeSet::new();
+
+        let mut one_pending: BTreeMap<String, RotationSuggestion> = BTreeMap::new();
+        one_pending.insert(
+            "some-id".to_string(),
+            RotationSuggestion {
+                id: "some-id".to_string(),
+                wallet: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                score: 90.0,
+                reason: "test".to_string(),
+                expected_impact: "test".to_string(),
+                status: SuggestionStatus::Pending,
+                created_at: now,
+                decided_at: None,
+            },
+        );
+
+        let mut scores = HashMap::new();
+        scores.insert(
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            WalletScore {
+                wallet: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                score: 90.0,
+                pnl_consistency: 0.9,
+                win_rate: 0.9,
+                drawdown_penalty: 0.1,
+                recent_activity: 0.9,
+                fill_quality: 0.9,
+                updated_at: now,
+            },
+        );
+
+        let result = maybe_create_rotation_suggestion(
+            &tracked,
+            &one_pending,
+            &scores,
+            5,
+            None,
+            now,
+            8.0,
+            50.0,
+            Duration::from_secs(0),
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn compute_backoff_delay_saturates_at_max() {
+        // 250 * 2^100 overflows u64, saturates to u64::MAX, then min(u64::MAX, 5_000) = 5_000
+        let delay = compute_backoff_delay(250, 5_000, 100);
+        assert_eq!(delay, 5_000);
+    }
+
+    #[test]
     fn creates_rotation_suggestion_only_for_meaningful_delta() {
         let tracked_wallets: BTreeSet<String> = [
             "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),

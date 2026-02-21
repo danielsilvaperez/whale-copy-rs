@@ -28,3 +28,38 @@ test("parseCapsArgs keeps only supported positive numeric keys", () => {
     max_open_positions: 25,
   });
 });
+
+test("parseCommandText returns null for empty string", () => {
+  assert.equal(parseCommandText(""), null);
+});
+
+test("parseCommandText returns null for slash only", () => {
+  assert.equal(parseCommandText("/"), null);
+});
+
+test("parseCommandText lowercases command name", () => {
+  const parsed = parseCommandText("/STATUS");
+  assert.ok(parsed);
+  assert.equal(parsed?.name, "status");
+});
+
+test("parseCommandText preserves arg casing", () => {
+  const parsed = parseCommandText("/command FooBar BAZ");
+  assert.ok(parsed);
+  assert.deepEqual(parsed?.args, ["FooBar", "BAZ"]);
+});
+
+test("parseCapsArgs ignores zero values", () => {
+  const caps = parseCapsArgs(["max_open_positions=0"]);
+  assert.deepEqual(caps, {});
+});
+
+test("parseCapsArgs ignores malformed key=value (no equals)", () => {
+  const caps = parseCapsArgs(["max_open_positionsnoequalssign"]);
+  assert.deepEqual(caps, {});
+});
+
+test("parseCapsArgs handles multiple equals (takes first value)", () => {
+  const caps = parseCapsArgs(["max_open_positions=25=extra"]);
+  assert.deepEqual(caps, { max_open_positions: 25 });
+});

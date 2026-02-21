@@ -120,7 +120,12 @@ impl EngineState {
 
 #[cfg(test)]
 mod tests {
-    use super::DedupeCache;
+    use std::collections::BTreeSet;
+
+    use serde_json::json;
+
+    use super::{DedupeCache, EngineState};
+    use crate::types::{EventClass, RuntimeSettings};
 
     #[test]
     fn dedupe_cache_rejects_duplicates() {
@@ -131,5 +136,33 @@ mod tests {
         assert!(cache.add("c"));
         assert!(cache.add("d"));
         assert!(cache.add("a"));
+    }
+
+    #[test]
+    fn maybe_reset_daily_notional_resets_on_new_day() {
+        let mut state = EngineState::new(RuntimeSettings::default(), BTreeSet::new());
+        state.daily_notional_usd = 9_500.0;
+        state.current_trading_day =
+            chrono::Utc::now().date_naive() - chrono::Duration::days(1);
+        state.maybe_reset_daily_notional();
+        assert_eq!(state.daily_notional_usd, 0.0);
+        assert_eq!(state.current_trading_day, chrono::Utc::now().date_naive());
+    }
+
+    #[test]
+    fn maybe_reset_daily_notional_noop_same_day() {
+        let mut state = EngineState::new(RuntimeSettings::default(), BTreeSet::new());
+        state.daily_notional_usd = 9_500.0;
+        state.maybe_reset_daily_notional(); // today == today
+        assert_eq!(state.daily_notional_usd, 9_500.0);
+    }
+
+    #[test]
+    fn event_buffer_caps_at_5000() {
+        let mut state = EngineState::new(RuntimeSettings::default(), BTreeSet::new());
+        for i in 0..5_100usize {
+            state.push_event(EventClass::Info, format!("e{i}"), json!({}));
+        }
+        assert_eq!(state.event_buffer.len(), 5_000);
     }
 }

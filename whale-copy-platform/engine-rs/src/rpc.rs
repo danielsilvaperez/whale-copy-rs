@@ -839,9 +839,45 @@ mod tests {
     use crate::config::EngineConfig;
     use crate::db::Db;
     use crate::state::EngineState;
-    use crate::types::{RpcRequest, RuntimeSettings};
+    use crate::types::{EventClass, RpcRequest, RuntimeSettings};
 
     use super::*;
+
+    async fn make_ctx(dir: &tempfile::TempDir) -> AppContext {
+        let db_path = dir.path().join("test.db");
+        let socket_path = dir.path().join("engine.sock");
+        let db = Db::new(db_path.display().to_string());
+        db.init().await.expect("db init");
+        AppContext {
+            state: Arc::new(RwLock::new(EngineState::new(
+                RuntimeSettings::default(),
+                BTreeSet::new(),
+            ))),
+            db,
+            config: EngineConfig {
+                db_path: db_path.display().to_string(),
+                socket_path: socket_path.display().to_string(),
+                data_api_base: "https://data-api.example.com".to_string(),
+                execution_api_base: None,
+                fetch_interval_ms: 1_500,
+                rotation_interval_ms: 60_000,
+                heartbeat_interval_ms: 5_000,
+                request_timeout_ms: 2_500,
+                network_retry_limit: 3,
+                rotation_rank_delta_threshold: 8.0,
+                rotation_confidence_floor: 52.0,
+                rotation_cooldown_secs: 1_800,
+                source_equity_fallback_usd: 100_000.0,
+                log_dir: dir.path().join("logs").display().to_string(),
+                log_retention_days: 7,
+                rpcs: vec![],
+                log_level: "info".to_string(),
+                command_tail_default: 50,
+                runtime_settings: RuntimeSettings::default(),
+            },
+            started_at: Utc::now(),
+        }
+    }
 
     #[test]
     fn parse_mode_rejects_invalid_values() {
@@ -915,5 +951,212 @@ mod tests {
             .and_then(|value| value.get("wallets").cloned())
             .expect("wallets field present");
         assert!(wallets.to_string().contains("0x1111111111111111111111111111111111111111"));
+    }
+
+    #[tokio::test]
+    async fn rpc_set_copy_sells_toggles_and_persists() {
+        let dir = tempdir().expect("tempdir");
+        let ctx = make_ctx(&dir).await;
+
+        let response = handle_rpc_request(
+            RpcRequest {
+                method: "set_copy_sells".to_string(),
+                params: json!({ "copy_sells": false }),
+                actor_chat_id: None,
+                request_id: None,
+            },
+            &ctx,
+        )
+        .await;
+
+        assert!(response.ok);
+        let state = ctx.state.read().await;
+        assert!(!state.settings.copy_sells);
+    }
+
+    #[tokio::test]
+    async fn rpc_pause_and_resume_trading() {
+        let dir = tempdir().expect("tempdir");
+        let ctx = make_ctx(&dir).await;
+
+        let pause_response = handle_rpc_request(
+            RpcRequest {
+                method: "pause_trading".to_string(),
+                params: json!({}),
+                actor_chat_id: None,
+                request_id: None,
+            },
+            &ctx,
+        )
+        .await;
+        assert!(pause_response.ok);
+        {
+            let state = ctx.state.read().await;
+            assert!(state.settings.paused);
+        }
+
+        let resume_response = handle_rpc_request(
+            RpcRequest {
+                method: "resume_trading".to_string(),
+                params: json!({}),
+                actor_chat_id: None,
+                request_id: None,
+            },
+            &ctx,
+        )
+        .await;
+        assert!(resume_response.ok);
+        {
+            let state = ctx.state.read().await;
+            assert!(!state.settings.paused);
+        }
+    }
+
+    #[tokio::test]
+    async fn rpc_set_multiplier_rejects_non_positive() {
+        let dir = tempdir().expect("tempdir");
+        let ctx = make_ctx(&dir).await;
+
+        // multiplier = 0 → error
+        let r0 = handle_rpc_request(
+            RpcRequest {
+                method: "set_multiplier".to_string(),
+                params: json!({ "multiplier": 0.0 }),
+                actor_chat_id: None,
+                request_id: None,
+            },
+            &ctx,
+        )
+        .await;
+        assert!(!r0.ok);
+
+        // multiplier = -1 → error
+        let r_neg = handle_rpc_request(
+            RpcRequest {
+                method: "set_multiplier".to_string(),
+                params: json!({ "multiplier": -1.0 }),
+                actor_chat_id: None,
+                request_id: None,
+            },
+            &ctx,
+        )
+        .await;
+        assert!(!r_neg.ok);
+
+        // multiplier = 2.0 → ok
+        let r_ok = handle_rpc_request(
+            RpcRequest {
+                method: "set_multiplier".to_string(),
+                params: json!({ "multiplier": 2.0 }),
+                actor_chat_id: None,
+                request_id: None,
+            },
+            &ctx,
+        )
+        .await;
+        assert!(r_ok.ok);
+    }
+
+    #[tokio::test]
+    async fn rpc_set_follower_equity_rejects_non_positive() {
+        let dir = tempdir().expect("tempdir");
+        let ctx = make_ctx(&dir).await;
+
+        // follower_equity_usd = 0 → error
+        let r0 = handle_rpc_request(
+            RpcRequest {
+                method: "set_follower_equity".to_string(),
+                params: json!({ "follower_equity_usd": 0.0 }),
+                actor_chat_id: None,
+                request_id: None,
+            },
+            &ctx,
+        )
+        .await;
+        assert!(!r0.ok);
+
+        // follower_equity_usd = 5000 → ok
+        let r_ok = handle_rpc_request(
+            RpcRequest {
+                method: "set_follower_equity".to_string(),
+                params: json!({ "follower_equity_usd": 5_000.0 }),
+                actor_chat_id: None,
+                request_id: None,
+            },
+            &ctx,
+        )
+        .await;
+        assert!(r_ok.ok);
+    }
+
+    #[tokio::test]
+    async fn rpc_remove_wallet_returns_noop_for_unknown() {
+        let dir = tempdir().expect("tempdir");
+        let ctx = make_ctx(&dir).await;
+
+        // Wallet is not in tracked_wallets → removed = false
+        let response = handle_rpc_request(
+            RpcRequest {
+                method: "remove_wallet".to_string(),
+                params: json!({ "wallet": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }),
+                actor_chat_id: None,
+                request_id: None,
+            },
+            &ctx,
+        )
+        .await;
+
+        assert!(response.ok);
+        let result = response.result.expect("result present");
+        assert_eq!(result.get("removed").and_then(|v| v.as_bool()), Some(false));
+    }
+
+    #[tokio::test]
+    async fn rpc_panic_close_emits_critical_event() {
+        let dir = tempdir().expect("tempdir");
+        let ctx = make_ctx(&dir).await;
+
+        let response = handle_rpc_request(
+            RpcRequest {
+                method: "panic_close".to_string(),
+                params: json!({}),
+                actor_chat_id: None,
+                request_id: None,
+            },
+            &ctx,
+        )
+        .await;
+
+        assert!(response.ok);
+
+        let state = ctx.state.read().await;
+        assert!(state.settings.paused);
+
+        let has_critical = state
+            .event_buffer
+            .iter()
+            .any(|e| matches!(e.class, EventClass::Critical));
+        assert!(has_critical);
+    }
+
+    #[tokio::test]
+    async fn rpc_unknown_method_returns_error() {
+        let dir = tempdir().expect("tempdir");
+        let ctx = make_ctx(&dir).await;
+
+        let response = handle_rpc_request(
+            RpcRequest {
+                method: "not_a_real_method".to_string(),
+                params: json!({}),
+                actor_chat_id: None,
+                request_id: None,
+            },
+            &ctx,
+        )
+        .await;
+
+        assert!(!response.ok);
+        let error = response.error.expect("error message present");
+        assert!(error.contains("not_a_real_method"));
     }
 }
