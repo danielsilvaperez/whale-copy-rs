@@ -81,6 +81,9 @@ async function run(): Promise<void> {
   const rpc = new EngineRpcClient(config.engineSocketPath, config.rpcTimeoutMs);
 
   const primaryChatId = [...config.allowedChatIds][0];
+  if (!primaryChatId) {
+    throw new Error("No allowed chat IDs configured - cannot start bot");
+  }
   let offset = 0;
   let notifierPrimed = false;
   const seenEventIds = new Set<string>();
