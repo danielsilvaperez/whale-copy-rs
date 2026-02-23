@@ -30,6 +30,7 @@ fi
 
 set -a
 # shellcheck disable=SC1090
+# shellcheck source=/dev/null
 source "$ROOT_DIR/.env"
 set +a
 
