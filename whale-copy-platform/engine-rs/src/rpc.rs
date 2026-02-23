@@ -17,7 +17,8 @@ use crate::db::Db;
 use crate::signals::{compute_backoff_delay, normalize_wallet};
 use crate::state::EngineState;
 use crate::types::{
-    EngineMode, EventClass, RiskProfile, RotationSuggestion, RpcRequest, RpcResponse, SuggestionStatus,
+    EngineMode, EventClass, RiskProfile, RotationSuggestion, RpcRequest, RpcResponse,
+    SuggestionStatus,
 };
 
 #[derive(Clone)]
@@ -106,7 +107,7 @@ pub async fn run_rpc_server(ctx: AppContext) -> Result<()> {
 
     let listener = UnixListener::bind(&socket_path)
         .with_context(|| format!("binding unix socket at {}", socket_path))?;
-    
+
     // Restrict socket permissions to owner only
     #[cfg(unix)]
     {
@@ -119,7 +120,10 @@ pub async fn run_rpc_server(ctx: AppContext) -> Result<()> {
     tracing::info!(socket_path = %socket_path, "rpc listener started");
 
     loop {
-        let (stream, _) = listener.accept().await.context("accepting rpc socket client")?;
+        let (stream, _) = listener
+            .accept()
+            .await
+            .context("accepting rpc socket client")?;
         let ctx_clone = ctx.clone();
         tokio::spawn(async move {
             if let Err(err) = handle_client(stream, ctx_clone).await {
@@ -416,9 +420,11 @@ async fn process_rpc_method(
 
             let (old_value, new_value, settings_snapshot, event) = {
                 let mut state = ctx.state.write().await;
-                let old_value = json!({ "follower_equity_usd": state.settings.follower_equity_usd });
+                let old_value =
+                    json!({ "follower_equity_usd": state.settings.follower_equity_usd });
                 state.settings.follower_equity_usd = params.follower_equity_usd;
-                let new_value = json!({ "follower_equity_usd": state.settings.follower_equity_usd });
+                let new_value =
+                    json!({ "follower_equity_usd": state.settings.follower_equity_usd });
                 let event = state.push_event(
                     EventClass::Info,
                     "follower_equity_changed",
@@ -449,11 +455,8 @@ async fn process_rpc_method(
                 let old_value = json!({ "copy_sells": state.settings.copy_sells });
                 state.settings.copy_sells = params.copy_sells;
                 let new_value = json!({ "copy_sells": state.settings.copy_sells });
-                let event = state.push_event(
-                    EventClass::Info,
-                    "copy_sells_changed",
-                    new_value.clone(),
-                );
+                let event =
+                    state.push_event(EventClass::Info, "copy_sells_changed", new_value.clone());
                 (old_value, new_value, state.settings.clone(), event)
             };
 
@@ -489,7 +492,11 @@ async fn process_rpc_method(
                 let new_wallets = json!({ "wallets": state.tracked_wallets.clone() });
                 let event = state.push_event(
                     EventClass::Rotation,
-                    if inserted { "wallet_added" } else { "wallet_add_rejected" },
+                    if inserted {
+                        "wallet_added"
+                    } else {
+                        "wallet_add_rejected"
+                    },
                     json!({ "wallet": normalized, "inserted": inserted }),
                 );
 
@@ -497,9 +504,13 @@ async fn process_rpc_method(
             };
 
             if inserted {
-                ctx.db.set_wallet_active(&normalized, "manual", true).await?;
+                ctx.db
+                    .set_wallet_active(&normalized, "manual", true)
+                    .await?;
             }
-            ctx.db.insert_event(&event, None, Some(&normalized), None).await?;
+            ctx.db
+                .insert_event(&event, None, Some(&normalized), None)
+                .await?;
 
             let result = if inserted {
                 "ok"
@@ -531,16 +542,24 @@ async fn process_rpc_method(
                 let new_wallets = json!({ "wallets": state.tracked_wallets.clone() });
                 let event = state.push_event(
                     EventClass::Rotation,
-                    if removed { "wallet_removed" } else { "wallet_remove_noop" },
+                    if removed {
+                        "wallet_removed"
+                    } else {
+                        "wallet_remove_noop"
+                    },
                     json!({ "wallet": normalized, "removed": removed }),
                 );
                 (old_wallets, new_wallets, event, removed)
             };
 
             if removed {
-                ctx.db.set_wallet_active(&normalized, "manual_remove", false).await?;
+                ctx.db
+                    .set_wallet_active(&normalized, "manual_remove", false)
+                    .await?;
             }
-            ctx.db.insert_event(&event, None, Some(&normalized), None).await?;
+            ctx.db
+                .insert_event(&event, None, Some(&normalized), None)
+                .await?;
 
             let result = if removed { "ok" } else { "noop:not_found" }.to_string();
 
@@ -561,7 +580,11 @@ async fn process_rpc_method(
                 let old_value = json!({ "paused": state.settings.paused });
                 state.settings.paused = true;
                 let new_value = json!({ "paused": state.settings.paused });
-                let event = state.push_event(EventClass::Risk, "trading_paused", json!({ "paused": true }));
+                let event = state.push_event(
+                    EventClass::Risk,
+                    "trading_paused",
+                    json!({ "paused": true }),
+                );
                 (old_value, new_value, state.settings.clone(), event)
             };
 
@@ -585,7 +608,11 @@ async fn process_rpc_method(
                 let old_value = json!({ "paused": state.settings.paused });
                 state.settings.paused = false;
                 let new_value = json!({ "paused": state.settings.paused });
-                let event = state.push_event(EventClass::Info, "trading_resumed", json!({ "paused": false }));
+                let event = state.push_event(
+                    EventClass::Info,
+                    "trading_resumed",
+                    json!({ "paused": false }),
+                );
                 (old_value, new_value, state.settings.clone(), event)
             };
 
@@ -641,10 +668,15 @@ async fn process_rpc_method(
             }
             .ok_or_else(|| anyhow!("unknown suggestion id"))?;
 
-            let (replaced_wallet, tracked_after) = approve_suggestion_and_update_wallets(ctx, &suggestion).await?;
+            let (replaced_wallet, tracked_after) =
+                approve_suggestion_and_update_wallets(ctx, &suggestion).await?;
 
             ctx.db
-                .set_rotation_suggestion_status(&suggestion.id, SuggestionStatus::Approved, Utc::now())
+                .set_rotation_suggestion_status(
+                    &suggestion.id,
+                    SuggestionStatus::Approved,
+                    Utc::now(),
+                )
                 .await?;
 
             let event = {
@@ -692,7 +724,11 @@ async fn process_rpc_method(
             .ok_or_else(|| anyhow!("unknown suggestion id"))?;
 
             ctx.db
-                .set_rotation_suggestion_status(&suggestion.id, SuggestionStatus::Rejected, Utc::now())
+                .set_rotation_suggestion_status(
+                    &suggestion.id,
+                    SuggestionStatus::Rejected,
+                    Utc::now(),
+                )
                 .await?;
 
             let event = {
@@ -749,7 +785,11 @@ async fn approve_suggestion_and_update_wallets(
     };
 
     if tracked_before.len() >= max_wallets {
-        let scores = ctx.db.load_wallet_scores().await.unwrap_or_else(|_| HashMap::new());
+        let scores = ctx
+            .db
+            .load_wallet_scores()
+            .await
+            .unwrap_or_else(|_| HashMap::new());
         let wallet_to_remove = tracked_before
             .iter()
             .min_by(|a, b| {
@@ -859,6 +899,7 @@ mod tests {
                 socket_path: socket_path.display().to_string(),
                 data_api_base: "https://data-api.example.com".to_string(),
                 execution_api_base: None,
+                allow_live_simulation: false,
                 fetch_interval_ms: 1_500,
                 rotation_interval_ms: 60_000,
                 heartbeat_interval_ms: 5_000,
@@ -904,6 +945,7 @@ mod tests {
                 socket_path: socket_path.display().to_string(),
                 data_api_base: "https://data-api.polymarket.com".to_string(),
                 execution_api_base: None,
+                allow_live_simulation: false,
                 fetch_interval_ms: 1_500,
                 rotation_interval_ms: 60_000,
                 heartbeat_interval_ms: 5_000,
@@ -950,7 +992,11 @@ mod tests {
             .result
             .and_then(|value| value.get("wallets").cloned())
             .expect("wallets field present");
-        assert!(wallets.to_string().contains("0x1111111111111111111111111111111111111111"));
+        assert!(
+            wallets
+                .to_string()
+                .contains("0x1111111111111111111111111111111111111111")
+        );
     }
 
     #[tokio::test]

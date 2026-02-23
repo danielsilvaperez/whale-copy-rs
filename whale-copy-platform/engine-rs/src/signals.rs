@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::types::{
-    CopySignal, EngineMode, ExecutionIntent, ExecutionResult, OrderStyle, RiskDecision, RotationSuggestion,
-    RuntimeSettings, SourceFillEvent, SuggestionStatus, TradeSide, WalletScore,
+    CopySignal, EngineMode, ExecutionIntent, ExecutionResult, OrderStyle, RiskDecision,
+    RotationSuggestion, RuntimeSettings, SourceFillEvent, SuggestionStatus, TradeSide, WalletScore,
 };
 
 const DEFAULT_EVENT_LOOKBACK_LIMIT: usize = 25;
@@ -49,18 +49,18 @@ pub fn normalize_wallet(value: &str) -> Option<String> {
         return None;
     }
 
-    if normalized
-        .chars()
-        .skip(2)
-        .all(|c| c.is_ascii_hexdigit())
-    {
+    if normalized.chars().skip(2).all(|c| c.is_ascii_hexdigit()) {
         Some(normalized)
     } else {
         None
     }
 }
 
-pub fn build_copy_signal(event: &SourceFillEvent, settings: &RuntimeSettings, fallback_source_equity: f64) -> Option<CopySignal> {
+pub fn build_copy_signal(
+    event: &SourceFillEvent,
+    settings: &RuntimeSettings,
+    fallback_source_equity: f64,
+) -> Option<CopySignal> {
     if event.source_trade_notional_usd <= 0.0 || event.source_price <= 0.0 {
         return None;
     }
@@ -126,7 +126,8 @@ pub fn evaluate_signal(
         .copy_notional_usd
         .min(settings.caps.max_copy_notional_per_trade);
 
-    let market_remaining = settings.caps.max_market_exposure_usd - current_market_exposure_usd.max(0.0);
+    let market_remaining =
+        settings.caps.max_market_exposure_usd - current_market_exposure_usd.max(0.0);
     if market_remaining <= 0.0 {
         return RiskEvaluation {
             decision: RiskDecision::Block {
@@ -138,7 +139,8 @@ pub fn evaluate_signal(
     }
     adjusted_notional = adjusted_notional.min(market_remaining);
 
-    let daily_remaining = settings.caps.max_daily_notional_usd - current_daily_notional_usd.max(0.0);
+    let daily_remaining =
+        settings.caps.max_daily_notional_usd - current_daily_notional_usd.max(0.0);
     if daily_remaining <= 0.0 {
         return RiskEvaluation {
             decision: RiskDecision::Block {
@@ -176,7 +178,10 @@ pub fn evaluate_signal(
 
     let mut adjusted_signal = signal.clone();
     adjusted_signal.copy_notional_usd = round_down(adjusted_notional, 4);
-    adjusted_signal.copy_quantity = round_down(adjusted_signal.copy_notional_usd / adjusted_signal.source_price, 4);
+    adjusted_signal.copy_quantity = round_down(
+        adjusted_signal.copy_notional_usd / adjusted_signal.source_price,
+        4,
+    );
 
     if adjusted_signal.copy_quantity <= 0.0 {
         return RiskEvaluation {
@@ -220,6 +225,7 @@ pub async fn execute_intent(
     client: &Client,
     mode: EngineMode,
     execution_api_base: Option<&str>,
+    allow_live_simulation: bool,
     settings: &RuntimeSettings,
     intent: &ExecutionIntent,
 ) -> ExecutionResult {
@@ -238,6 +244,18 @@ pub async fn execute_intent(
     }
 
     let Some(base_url) = execution_api_base.filter(|v| !v.is_empty()) else {
+        if !allow_live_simulation {
+            return ExecutionResult {
+                execution_id: intent.execution_id.clone(),
+                success: false,
+                attempts: 0,
+                filled_quantity: 0.0,
+                average_fill_price: None,
+                latency_ms: start.elapsed().as_micros() as f64 / 1_000.0,
+                message: "live_mode_requires_execution_api".to_string(),
+            };
+        }
+
         return ExecutionResult {
             execution_id: intent.execution_id.clone(),
             success: true,
@@ -253,7 +271,11 @@ pub async fn execute_intent(
     let step = (settings.limit_price_offset / 2.0).max(0.001);
 
     for attempt in 1..=intent.max_attempts {
-        if exceeds_price_deviation(intent.limit_price, attempt_price, intent.max_price_deviation_bps) {
+        if exceeds_price_deviation(
+            intent.limit_price,
+            attempt_price,
+            intent.max_price_deviation_bps,
+        ) {
             return ExecutionResult {
                 execution_id: intent.execution_id.clone(),
                 success: false,
@@ -368,10 +390,9 @@ pub async fn fetch_wallet_activity(
     for endpoint in endpoints {
         match client.get(&endpoint).send().await {
             Ok(response) if response.status().is_success() => {
-                let body: Value = response
-                    .json()
-                    .await
-                    .with_context(|| format!("parsing wallet activity response from {}", endpoint))?;
+                let body: Value = response.json().await.with_context(|| {
+                    format!("parsing wallet activity response from {}", endpoint)
+                })?;
 
                 let events = parse_source_fill_events(wallet, &body, fallback_source_equity_usd);
                 if !events.is_empty() {
@@ -379,7 +400,11 @@ pub async fn fetch_wallet_activity(
                 }
             }
             Ok(response) => {
-                last_error = Some(anyhow!("{} returned status {}", endpoint, response.status()));
+                last_error = Some(anyhow!(
+                    "{} returned status {}",
+                    endpoint,
+                    response.status()
+                ));
             }
             Err(err) => {
                 last_error = Some(anyhow!("{} request failed: {}", endpoint, err));
@@ -390,10 +415,19 @@ pub async fn fetch_wallet_activity(
     Err(last_error.unwrap_or_else(|| anyhow!("no wallet activity endpoint returned usable events")))
 }
 
-pub async fn fetch_wallet_candidates(client: &Client, data_api_base: &str) -> Result<Vec<CandidateWalletMetrics>> {
+pub async fn fetch_wallet_candidates(
+    client: &Client,
+    data_api_base: &str,
+) -> Result<Vec<CandidateWalletMetrics>> {
     let endpoints = [
-        format!("{}/leaderboard?limit=100", data_api_base.trim_end_matches('/')),
-        format!("{}/users/leaderboard?limit=100", data_api_base.trim_end_matches('/')),
+        format!(
+            "{}/leaderboard?limit=100",
+            data_api_base.trim_end_matches('/')
+        ),
+        format!(
+            "{}/users/leaderboard?limit=100",
+            data_api_base.trim_end_matches('/')
+        ),
     ];
 
     let mut last_error: Option<anyhow::Error> = None;
@@ -401,17 +435,20 @@ pub async fn fetch_wallet_candidates(client: &Client, data_api_base: &str) -> Re
     for endpoint in endpoints {
         match client.get(&endpoint).send().await {
             Ok(response) if response.status().is_success() => {
-                let payload: Value = response
-                    .json()
-                    .await
-                    .with_context(|| format!("parsing wallet candidate response from {}", endpoint))?;
+                let payload: Value = response.json().await.with_context(|| {
+                    format!("parsing wallet candidate response from {}", endpoint)
+                })?;
                 let candidates = parse_wallet_candidates(&payload);
                 if !candidates.is_empty() {
                     return Ok(candidates);
                 }
             }
             Ok(response) => {
-                last_error = Some(anyhow!("{} returned status {}", endpoint, response.status()));
+                last_error = Some(anyhow!(
+                    "{} returned status {}",
+                    endpoint,
+                    response.status()
+                ));
             }
             Err(err) => {
                 last_error = Some(anyhow!("{} request failed: {}", endpoint, err));
@@ -427,7 +464,8 @@ pub fn parse_source_fill_events(
     payload: &Value,
     fallback_source_equity_usd: f64,
 ) -> Vec<SourceFillEvent> {
-    let wallet = normalize_wallet(source_wallet).unwrap_or_else(|| source_wallet.to_ascii_lowercase());
+    let wallet =
+        normalize_wallet(source_wallet).unwrap_or_else(|| source_wallet.to_ascii_lowercase());
     let mut out = Vec::new();
 
     for item in collect_array_items(payload) {
@@ -437,13 +475,13 @@ pub fn parse_source_fill_events(
 
         let market_slug = field_str(item, &["market_slug", "market", "slug"])
             .unwrap_or_else(|| "unknown-market".to_string());
-        let token_id = field_str(item, &["token_id", "asset_id", "outcome_id"]) 
+        let token_id = field_str(item, &["token_id", "asset_id", "outcome_id"])
             .unwrap_or_else(|| market_slug.clone());
 
-        let source_price = field_f64(item, &["source_price", "price", "avg_price", "last_price"])
-            .unwrap_or(0.0);
-        let source_quantity = field_f64(item, &["source_quantity", "quantity", "shares", "size"])
-            .unwrap_or(0.0);
+        let source_price =
+            field_f64(item, &["source_price", "price", "avg_price", "last_price"]).unwrap_or(0.0);
+        let source_quantity =
+            field_f64(item, &["source_quantity", "quantity", "shares", "size"]).unwrap_or(0.0);
 
         let source_trade_notional_usd = field_f64(
             item,
@@ -462,9 +500,12 @@ pub fn parse_source_fill_events(
             continue;
         }
 
-        let source_equity_usd = field_f64(item, &["source_equity_usd", "wallet_equity_usd", "equity_usd"])
-            .unwrap_or(fallback_source_equity_usd)
-            .max(1.0);
+        let source_equity_usd = field_f64(
+            item,
+            &["source_equity_usd", "wallet_equity_usd", "equity_usd"],
+        )
+        .unwrap_or(fallback_source_equity_usd)
+        .max(1.0);
 
         const EDGE_FALLBACK_MONEYNESS_CENTER: f64 = 0.5;
         const EDGE_FALLBACK_MONEYNESS_MULTIPLIER: f64 = 1.5;
@@ -485,9 +526,12 @@ pub fn parse_source_fill_events(
             _ => TradeSide::Buy,
         };
 
-        let observed_at = field_str(item, &["observed_at", "timestamp", "created_at", "transact_time"])
-            .and_then(|raw| parse_time(&raw))
-            .unwrap_or_else(Utc::now);
+        let observed_at = field_str(
+            item,
+            &["observed_at", "timestamp", "created_at", "transact_time"],
+        )
+        .and_then(|raw| parse_time(&raw))
+        .unwrap_or_else(Utc::now);
 
         out.push(SourceFillEvent {
             execution_id,
@@ -519,15 +563,26 @@ pub fn parse_wallet_candidates(payload: &Value) -> Vec<CandidateWalletMetrics> {
             continue;
         };
 
-        let pnl_consistency = normalize_metric(field_f64(item, &["pnl_consistency", "consistency", "pnl_score"]).unwrap_or(0.5));
-        let win_rate = normalize_metric(field_f64(item, &["win_rate", "winrate", "accuracy"]).unwrap_or(0.5));
-        let drawdown_penalty = normalize_metric(field_f64(item, &["drawdown_penalty", "drawdown", "max_drawdown"]).unwrap_or(0.2));
-        let recent_activity = normalize_metric(field_f64(item, &["recent_activity", "activity", "volume_activity"]).unwrap_or(0.5));
-        let fill_quality = normalize_metric(field_f64(item, &["fill_quality", "quality", "execution_quality"]).unwrap_or(0.5));
+        let pnl_consistency = normalize_metric(
+            field_f64(item, &["pnl_consistency", "consistency", "pnl_score"]).unwrap_or(0.5),
+        );
+        let win_rate =
+            normalize_metric(field_f64(item, &["win_rate", "winrate", "accuracy"]).unwrap_or(0.5));
+        let drawdown_penalty = normalize_metric(
+            field_f64(item, &["drawdown_penalty", "drawdown", "max_drawdown"]).unwrap_or(0.2),
+        );
+        let recent_activity = normalize_metric(
+            field_f64(item, &["recent_activity", "activity", "volume_activity"]).unwrap_or(0.5),
+        );
+        let fill_quality = normalize_metric(
+            field_f64(item, &["fill_quality", "quality", "execution_quality"]).unwrap_or(0.5),
+        );
 
         let confidence = field_f64(item, &["confidence", "confidence_score"])
             .map(normalize_metric)
-            .unwrap_or_else(|| ((recent_activity + fill_quality + (1.0 - drawdown_penalty)) / 3.0).clamp(0.0, 1.0));
+            .unwrap_or_else(|| {
+                ((recent_activity + fill_quality + (1.0 - drawdown_penalty)) / 3.0).clamp(0.0, 1.0)
+            });
 
         out.push(CandidateWalletMetrics {
             wallet,
@@ -585,12 +640,15 @@ pub fn maybe_create_rotation_suggestion(
     }
 
     let mut ranked: Vec<&WalletScore> = scores.values().collect();
-    ranked.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    ranked.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
-    let candidate = ranked
-        .iter()
-        .copied()
-        .find(|score| !tracked_wallets.contains(&score.wallet) && score.score >= confidence_floor)?;
+    let candidate = ranked.iter().copied().find(|score| {
+        !tracked_wallets.contains(&score.wallet) && score.score >= confidence_floor
+    })?;
 
     if tracked_wallets.len() < max_active_wallets {
         return Some(RotationSuggestion {
@@ -619,7 +677,10 @@ pub fn maybe_create_rotation_suggestion(
         id: Uuid::new_v4().to_string(),
         wallet: candidate.wallet.clone(),
         score: candidate.score,
-        reason: format!("rank_delta_triggered delta={:.2} threshold={:.2}", rank_delta, rank_delta_threshold),
+        reason: format!(
+            "rank_delta_triggered delta={:.2} threshold={:.2}",
+            rank_delta, rank_delta_threshold
+        ),
         expected_impact: format!("Replace weakest tracked wallet by +{:.2} score", rank_delta),
         status: SuggestionStatus::Pending,
         created_at: now,
@@ -736,7 +797,8 @@ mod tests {
         settings.follower_equity_usd = 10_000.0;
         settings.multiplier = 1.25;
 
-        let signal = build_copy_signal(&event, &settings, 100_000.0).expect("signal should be created");
+        let signal =
+            build_copy_signal(&event, &settings, 100_000.0).expect("signal should be created");
         assert!((signal.copy_notional_usd - 2_500.0).abs() < 0.0001);
         assert!((signal.copy_quantity - 5_000.0).abs() < 0.0001);
     }
@@ -905,6 +967,54 @@ mod tests {
         };
         let intent = build_execution_intent(&signal, &RuntimeSettings::default());
         assert!(intent.limit_price >= 0.001);
+    }
+
+    #[tokio::test]
+    async fn execute_intent_live_mode_without_execution_api_blocks_when_simulation_disabled() {
+        let settings = RuntimeSettings::default();
+        let client = Client::new();
+        let intent = ExecutionIntent {
+            execution_id: "exec-live-blocked".to_string(),
+            market_slug: "test-market".to_string(),
+            token_id: "test-token".to_string(),
+            side: TradeSide::Buy,
+            order_style: OrderStyle::LimitIoc,
+            quantity: 10.0,
+            limit_price: 0.42,
+            max_attempts: 2,
+            max_price_deviation_bps: 30.0,
+        };
+
+        let result =
+            execute_intent(&client, EngineMode::Live, None, false, &settings, &intent).await;
+
+        assert!(!result.success);
+        assert_eq!(result.attempts, 0);
+        assert_eq!(result.message, "live_mode_requires_execution_api");
+    }
+
+    #[tokio::test]
+    async fn execute_intent_live_mode_without_execution_api_simulates_when_enabled() {
+        let settings = RuntimeSettings::default();
+        let client = Client::new();
+        let intent = ExecutionIntent {
+            execution_id: "exec-live-sim".to_string(),
+            market_slug: "test-market".to_string(),
+            token_id: "test-token".to_string(),
+            side: TradeSide::Buy,
+            order_style: OrderStyle::LimitIoc,
+            quantity: 10.0,
+            limit_price: 0.42,
+            max_attempts: 2,
+            max_price_deviation_bps: 30.0,
+        };
+
+        let result =
+            execute_intent(&client, EngineMode::Live, None, true, &settings, &intent).await;
+
+        assert!(result.success);
+        assert_eq!(result.attempts, 1);
+        assert_eq!(result.message, "live_mode_no_execution_api_simulated_fill");
     }
 
     #[test]
@@ -1087,6 +1197,9 @@ mod tests {
         );
 
         assert!(suggestion.is_some());
-        assert_eq!(suggestion.expect("suggestion").wallet, "0xcccccccccccccccccccccccccccccccccccccccc");
+        assert_eq!(
+            suggestion.expect("suggestion").wallet,
+            "0xcccccccccccccccccccccccccccccccccccccccc"
+        );
     }
 }

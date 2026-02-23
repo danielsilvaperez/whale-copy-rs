@@ -23,6 +23,13 @@ Required minimum:
 - `TELEGRAM_ALLOWED_CHAT_IDS`
 - `ENGINE_DB_PATH`
 - `ENGINE_SOCKET_PATH`
+- `ENGINE_MODE` (`dry_run` or `live`)
+
+Live mode safety requirements:
+
+- Set `EXECUTION_API_BASE` to a reachable execution endpoint.
+- Keep `ALLOW_LIVE_SIMULATION=false` for production.
+- If `ENGINE_MODE=live` and `EXECUTION_API_BASE` is unset while `ALLOW_LIVE_SIMULATION=false`, the engine blocks execution and records failed order/risk events.
 
 ## 3) Install services
 
@@ -52,4 +59,5 @@ journalctl -u whale-copy-watchdog.service -f
 - Telegram `/status` returns engine snapshot.
 - Telegram `/wallet_add <wallet>` mutates allowlist.
 - Telegram `/logs 10` returns recent structured events.
+- Run `ENGINE_SOCKET_PATH=/tmp/whale-copy-engine.sock ./tests/rpc_smoke.sh` after engine startup.
 - Kill engine process and verify watchdog restarts + alert.

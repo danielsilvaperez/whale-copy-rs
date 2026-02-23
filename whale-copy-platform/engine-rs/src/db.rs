@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::Path;
 use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -9,8 +9,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 
 use crate::types::{
-    EventClass, EventEnvelope, ExecutionResult, RotationSuggestion, RuntimeSettings, SuggestionStatus,
-    WalletScore,
+    EventClass, EventEnvelope, ExecutionResult, RotationSuggestion, RuntimeSettings,
+    SuggestionStatus, WalletScore,
 };
 
 const SCHEMA_SQL: &str = include_str!("../../shared/sql/schema.sql");
@@ -109,7 +109,9 @@ impl Db {
     pub async fn load_wallet_allowlist(&self) -> Result<BTreeSet<String>> {
         self.with_conn(move |conn| {
             let mut stmt = conn
-                .prepare("SELECT wallet FROM wallet_allowlist WHERE active = 1 ORDER BY inserted_at ASC")
+                .prepare(
+                    "SELECT wallet FROM wallet_allowlist WHERE active = 1 ORDER BY inserted_at ASC",
+                )
                 .context("preparing wallet allowlist query")?;
             let rows = stmt
                 .query_map([], |row| row.get::<_, String>(0))
@@ -371,7 +373,8 @@ impl Db {
         let execution_id = execution_id.map(ToOwned::to_owned);
         let decision = decision.to_owned();
         let reason = reason.to_owned();
-        let payload_json = serde_json::to_string(payload).context("serializing risk event payload")?;
+        let payload_json =
+            serde_json::to_string(payload).context("serializing risk event payload")?;
         let id = uuid::Uuid::new_v4().to_string();
         let created_at = Utc::now().to_rfc3339();
 
@@ -435,10 +438,16 @@ impl Db {
         .await
     }
 
-    pub async fn write_heartbeat(&self, service: &str, status: &str, details: &Value) -> Result<()> {
+    pub async fn write_heartbeat(
+        &self,
+        service: &str,
+        status: &str,
+        details: &Value,
+    ) -> Result<()> {
         let service = service.to_owned();
         let status = status.to_owned();
-        let details_json = serde_json::to_string(details).context("serializing heartbeat details")?;
+        let details_json =
+            serde_json::to_string(details).context("serializing heartbeat details")?;
         let updated_at = Utc::now().to_rfc3339();
 
         self.with_conn(move |conn| {

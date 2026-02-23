@@ -10,6 +10,7 @@ pub struct EngineConfig {
     pub socket_path: String,
     pub data_api_base: String,
     pub execution_api_base: Option<String>,
+    pub allow_live_simulation: bool,
     pub fetch_interval_ms: u64,
     pub rotation_interval_ms: u64,
     pub heartbeat_interval_ms: u64,
@@ -30,7 +31,12 @@ pub struct EngineConfig {
 fn parse_bool(name: &str, default: bool) -> bool {
     env::var(name)
         .ok()
-        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
         .unwrap_or(default)
 }
 
@@ -44,12 +50,20 @@ fn parse_or<T: std::str::FromStr>(name: &str, default: T) -> T {
 pub fn load_config() -> Result<EngineConfig> {
     dotenvy::dotenv().ok();
 
-    let mode = match env::var("ENGINE_MODE").unwrap_or_else(|_| "dry_run".to_string()).to_ascii_lowercase().as_str() {
+    let mode = match env::var("ENGINE_MODE")
+        .unwrap_or_else(|_| "dry_run".to_string())
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "live" => EngineMode::Live,
         _ => EngineMode::DryRun,
     };
 
-    let risk_profile = match env::var("RISK_PROFILE").unwrap_or_else(|_| "aggressive".to_string()).to_ascii_lowercase().as_str() {
+    let risk_profile = match env::var("RISK_PROFILE")
+        .unwrap_or_else(|_| "aggressive".to_string())
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "conservative" => RiskProfile::Conservative,
         "balanced" => RiskProfile::Balanced,
         _ => RiskProfile::Aggressive,
@@ -69,7 +83,8 @@ pub fn load_config() -> Result<EngineConfig> {
         ..RuntimeSettings::default()
     };
 
-    runtime_settings.caps.max_copy_notional_per_trade = parse_or("MAX_COPY_NOTIONAL_PER_TRADE", 1_500_f64);
+    runtime_settings.caps.max_copy_notional_per_trade =
+        parse_or("MAX_COPY_NOTIONAL_PER_TRADE", 1_500_f64);
     runtime_settings.caps.max_market_exposure_usd = parse_or("MAX_MARKET_EXPOSURE_USD", 7_500_f64);
     runtime_settings.caps.max_daily_notional_usd = parse_or("MAX_DAILY_NOTIONAL_USD", 45_000_f64);
     runtime_settings.caps.max_open_positions = parse_or("MAX_OPEN_POSITIONS", 25_u32);
@@ -98,8 +113,10 @@ pub fn load_config() -> Result<EngineConfig> {
         anyhow::bail!("MAX_ACTIVE_WALLETS must be >= 1");
     }
 
-    let db_path = env::var("ENGINE_DB_PATH").unwrap_or_else(|_| "./data/whale_copy_platform.db".to_string());
-    let socket_path = env::var("ENGINE_SOCKET_PATH").unwrap_or_else(|_| "/tmp/whale-copy-engine.sock".to_string());
+    let db_path =
+        env::var("ENGINE_DB_PATH").unwrap_or_else(|_| "./data/whale_copy_platform.db".to_string());
+    let socket_path = env::var("ENGINE_SOCKET_PATH")
+        .unwrap_or_else(|_| "/tmp/whale-copy-engine.sock".to_string());
 
     let cfg = EngineConfig {
         db_path,
@@ -110,6 +127,7 @@ pub fn load_config() -> Result<EngineConfig> {
             .ok()
             .map(|v| v.trim().to_owned())
             .filter(|v| !v.is_empty()),
+        allow_live_simulation: parse_bool("ALLOW_LIVE_SIMULATION", false),
         fetch_interval_ms: parse_or("FETCH_INTERVAL_MS", 1_500_u64),
         rotation_interval_ms: parse_or("ROTATION_INTERVAL_MS", 120_000_u64),
         heartbeat_interval_ms: parse_or("HEARTBEAT_INTERVAL_MS", 5_000_u64),

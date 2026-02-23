@@ -4,7 +4,9 @@ use chrono::{NaiveDate, Utc};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::types::{EngineHealthSnapshot, EventClass, EventEnvelope, RotationSuggestion, RuntimeSettings};
+use crate::types::{
+    EngineHealthSnapshot, EventClass, EventEnvelope, RotationSuggestion, RuntimeSettings,
+};
 
 #[derive(Debug)]
 pub struct DedupeCache {
@@ -72,7 +74,12 @@ impl EngineState {
         }
     }
 
-    pub fn push_event(&mut self, class: EventClass, event_type: impl Into<String>, payload: Value) -> EventEnvelope {
+    pub fn push_event(
+        &mut self,
+        class: EventClass,
+        event_type: impl Into<String>,
+        payload: Value,
+    ) -> EventEnvelope {
         let event = EventEnvelope {
             id: Uuid::new_v4().to_string(),
             ts: Utc::now(),
@@ -142,8 +149,7 @@ mod tests {
     fn maybe_reset_daily_notional_resets_on_new_day() {
         let mut state = EngineState::new(RuntimeSettings::default(), BTreeSet::new());
         state.daily_notional_usd = 9_500.0;
-        state.current_trading_day =
-            chrono::Utc::now().date_naive() - chrono::Duration::days(1);
+        state.current_trading_day = chrono::Utc::now().date_naive() - chrono::Duration::days(1);
         state.maybe_reset_daily_notional();
         assert_eq!(state.daily_notional_usd, 0.0);
         assert_eq!(state.current_trading_day, chrono::Utc::now().date_naive());

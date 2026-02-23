@@ -25,26 +25,28 @@ Low-latency Polymarket wallet copy platform with split architecture:
 
 ## Layout
 
-- `engine-rs/`
-- `control-bot-ts/`
-- `shared/`
-- `ops/systemd/`
-- `ops/watchdog/`
-- `ops/scripts/`
-- `docs/`
-- `tests/`
+- `whale-copy-platform/engine-rs/`
+- `whale-copy-platform/control-bot-ts/`
+- `whale-copy-platform/shared/`
+- `whale-copy-platform/ops/systemd/`
+- `whale-copy-platform/ops/watchdog/`
+- `whale-copy-platform/ops/scripts/`
+- `whale-copy-platform/docs/`
+- `whale-copy-platform/tests/`
 
 ## Quick start (local)
 
-1. Copy `.env.example` to `.env` and fill required variables.
+1. Copy env file and fill required values:
+   - `cp whale-copy-platform/.env.example whale-copy-platform/.env`
 2. Engine tests/build:
-   - `cd engine-rs && cargo test`
+   - `cd whale-copy-platform/engine-rs && cargo test`
 3. Telegram bot build/tests:
-   - `cd control-bot-ts && npm install && npm run build && npm test`
+   - `cd whale-copy-platform/control-bot-ts && npm install && npm run build && npm test`
 4. Run locally:
-   - `./ops/scripts/run-local.sh`
+   - `cd whale-copy-platform && ./ops/scripts/run-local.sh`
 
-`run-local.sh` auto-loads `/opt/whale-copy-platform/.env` style variables from project root `.env`.
+`run-local.sh` requires `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_CHAT_IDS` in `whale-copy-platform/.env`.
+For production/live trading, set `ALLOW_LIVE_SIMULATION=false` and configure `EXECUTION_API_BASE`.
 
 ## RPC overview
 
@@ -59,13 +61,13 @@ JSON line protocol over Unix socket (default `/tmp/whale-copy-engine.sock`).
 {"ok":true,"result":{"health":{}},"request_id":"..."}
 ```
 
-Method list is documented in `shared/rpc/schema.json`.
+Method list is documented in `whale-copy-platform/shared/rpc/schema.json`.
 
 ## Linux deployment
 
 - Build artifacts:
-  - `./ops/scripts/build-all.sh`
-- Install unit files from `ops/systemd/` into `/etc/systemd/system/`.
+  - `cd whale-copy-platform && ./ops/scripts/build-all.sh`
+- Install unit files from `whale-copy-platform/ops/systemd/` into `/etc/systemd/system/`.
 - Configure env files under `/etc/whale-copy-platform/`.
 - Enable services:
   - `sudo systemctl daemon-reload`
@@ -73,4 +75,4 @@ Method list is documented in `shared/rpc/schema.json`.
   - `sudo systemctl enable --now whale-copy-telegram.service`
   - `sudo systemctl enable --now whale-copy-watchdog.service`
 
-Detailed runbook: `docs/OPERATIONS.md`.
+Detailed runbooks: `whale-copy-platform/docs/OPERATIONS.md` and `whale-copy-platform/docs/RELEASE_CHECKLIST.md`.

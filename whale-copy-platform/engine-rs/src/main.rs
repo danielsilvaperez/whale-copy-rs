@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
-use std::time::SystemTime;
 use std::time::Duration;
+use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -14,11 +14,13 @@ use whale_copy_engine::config::{EngineConfig, load_config};
 use whale_copy_engine::db::Db;
 use whale_copy_engine::rpc::{AppContext, run_rpc_server_with_backoff};
 use whale_copy_engine::signals::{
-    build_copy_signal, build_execution_intent, evaluate_signal, execute_intent, fetch_wallet_activity,
-    fetch_wallet_candidates, maybe_create_rotation_suggestion, score_wallet,
+    build_copy_signal, build_execution_intent, evaluate_signal, execute_intent,
+    fetch_wallet_activity, fetch_wallet_candidates, maybe_create_rotation_suggestion, score_wallet,
 };
 use whale_copy_engine::state::EngineState;
-use whale_copy_engine::types::{EventClass, RiskDecision, RuntimeSettings, SourceFillEvent, TradeSide};
+use whale_copy_engine::types::{
+    EventClass, RiskDecision, RuntimeSettings, SourceFillEvent, TradeSide,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -60,7 +62,9 @@ async fn main() -> Result<()> {
 
     tracing::info!("engine started");
 
-    tokio::signal::ctrl_c().await.context("listening for ctrl-c")?;
+    tokio::signal::ctrl_c()
+        .await
+        .context("listening for ctrl-c")?;
     tracing::info!("shutdown signal received");
 
     heartbeat_task.abort();
@@ -130,7 +134,8 @@ async fn resolve_tracked_wallets(db: &Db) -> Result<BTreeSet<String>> {
 }
 
 async fn heartbeat_loop(ctx: AppContext) -> Result<()> {
-    let mut interval = tokio::time::interval(Duration::from_millis(ctx.config.heartbeat_interval_ms));
+    let mut interval =
+        tokio::time::interval(Duration::from_millis(ctx.config.heartbeat_interval_ms));
 
     loop {
         interval.tick().await;
@@ -193,7 +198,11 @@ async fn signal_loop(ctx: AppContext, client: Client) -> Result<()> {
     }
 }
 
-async fn process_fill_event(ctx: &AppContext, client: &Client, fill_event: SourceFillEvent) -> Result<()> {
+async fn process_fill_event(
+    ctx: &AppContext,
+    client: &Client,
+    fill_event: SourceFillEvent,
+) -> Result<()> {
     let (settings, market_exposure, daily_notional, open_positions, is_duplicate) = {
         let mut state = ctx.state.write().await;
         let duplicate = !state.dedupe_cache.add(&fill_event.execution_id);
@@ -235,7 +244,12 @@ async fn process_fill_event(ctx: &AppContext, client: &Client, fill_event: Sourc
             "reason": "trading_paused",
         });
         ctx.db
-            .insert_risk_event(Some(&fill_event.execution_id), "block", "trading_paused", &payload)
+            .insert_risk_event(
+                Some(&fill_event.execution_id),
+                "block",
+                "trading_paused",
+                &payload,
+            )
             .await?;
 
         record_event(
@@ -258,7 +272,12 @@ async fn process_fill_event(ctx: &AppContext, client: &Client, fill_event: Sourc
             "reason": "copy_sells_disabled",
         });
         ctx.db
-            .insert_risk_event(Some(&fill_event.execution_id), "block", "copy_sells_disabled", &payload)
+            .insert_risk_event(
+                Some(&fill_event.execution_id),
+                "block",
+                "copy_sells_disabled",
+                &payload,
+            )
             .await?;
 
         record_event(
@@ -275,7 +294,11 @@ async fn process_fill_event(ctx: &AppContext, client: &Client, fill_event: Sourc
         return Ok(());
     }
 
-    let Some(raw_signal) = build_copy_signal(&fill_event, &settings, ctx.config.source_equity_fallback_usd) else {
+    let Some(raw_signal) = build_copy_signal(
+        &fill_event,
+        &settings,
+        ctx.config.source_equity_fallback_usd,
+    ) else {
         return Ok(());
     };
 
@@ -298,12 +321,7 @@ async fn process_fill_event(ctx: &AppContext, client: &Client, fill_event: Sourc
             });
 
             ctx.db
-                .insert_risk_event(
-                    Some(&raw_signal.execution_id),
-                    "block",
-                    reason,
-                    &payload,
-                )
+                .insert_risk_event(Some(&raw_signal.execution_id), "block", reason, &payload)
                 .await?;
 
             record_event(
@@ -330,6 +348,7 @@ async fn process_fill_event(ctx: &AppContext, client: &Client, fill_event: Sourc
         client,
         settings.mode,
         ctx.config.execution_api_base.as_deref(),
+        ctx.config.allow_live_simulation,
         &settings,
         &intent,
     )
@@ -394,6 +413,24 @@ async fn process_fill_event(ctx: &AppContext, client: &Client, fill_event: Sourc
         )
         .await?;
     } else {
+        let failure_payload = json!({
+            "execution_id": intent.execution_id,
+            "market_slug": intent.market_slug,
+            "side": side,
+            "quantity": intent.quantity,
+            "attempts": result.attempts,
+            "message": result.message,
+        });
+
+        ctx.db
+            .insert_risk_event(
+                Some(&intent.execution_id),
+                "block",
+                "execution_failed",
+                &failure_payload,
+            )
+            .await?;
+
         record_event(
             ctx,
             EventClass::Trade,
@@ -418,7 +455,8 @@ async fn process_fill_event(ctx: &AppContext, client: &Client, fill_event: Sourc
 }
 
 async fn rotation_loop(ctx: AppContext, client: Client) -> Result<()> {
-    let mut interval = tokio::time::interval(Duration::from_millis(ctx.config.rotation_interval_ms));
+    let mut interval =
+        tokio::time::interval(Duration::from_millis(ctx.config.rotation_interval_ms));
 
     loop {
         interval.tick().await;
@@ -528,7 +566,8 @@ fn prune_old_logs(log_dir: &str, retention_days: u32) -> Result<()> {
         let metadata = entry.metadata()?;
         let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
         if modified < cutoff {
-            fs::remove_file(&path).with_context(|| format!("removing old log {}", path.display()))?;
+            fs::remove_file(&path)
+                .with_context(|| format!("removing old log {}", path.display()))?;
         }
     }
 
@@ -555,4 +594,105 @@ async fn record_event(
         .with_context(|| format!("persisting event {}", event.event_type))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+    use std::sync::Arc;
+
+    use chrono::Utc;
+    use reqwest::Client;
+    use rusqlite::Connection;
+    use tempfile::tempdir;
+    use tokio::sync::RwLock;
+
+    use super::*;
+
+    fn test_engine_config(db_path: String) -> EngineConfig {
+        EngineConfig {
+            db_path,
+            socket_path: "/tmp/whale-copy-engine-test.sock".to_string(),
+            data_api_base: "https://data-api.polymarket.com".to_string(),
+            execution_api_base: None,
+            allow_live_simulation: false,
+            fetch_interval_ms: 1_500,
+            rotation_interval_ms: 120_000,
+            heartbeat_interval_ms: 5_000,
+            request_timeout_ms: 3_500,
+            network_retry_limit: 3,
+            rotation_rank_delta_threshold: 8.0,
+            rotation_confidence_floor: 52.0,
+            rotation_cooldown_secs: 1_800,
+            source_equity_fallback_usd: 100_000.0,
+            log_dir: "./logs".to_string(),
+            log_retention_days: 7,
+            rpcs: Vec::new(),
+            log_level: "info".to_string(),
+            command_tail_default: 50,
+            runtime_settings: RuntimeSettings::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn process_fill_event_records_failed_order_and_risk_event_when_live_api_missing() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("engine-test.db");
+        let db_path_str = db_path.display().to_string();
+        let db = Db::new(db_path_str.clone());
+        db.init().await.expect("init db");
+
+        let mut settings = RuntimeSettings::default();
+        settings.mode = whale_copy_engine::types::EngineMode::Live;
+        settings.follower_equity_usd = 20_000.0;
+
+        let state = EngineState::new(settings.clone(), BTreeSet::new());
+        let ctx = AppContext {
+            state: Arc::new(RwLock::new(state)),
+            db: db.clone(),
+            config: test_engine_config(db_path_str.clone()),
+            started_at: Utc::now(),
+        };
+
+        let fill_event = SourceFillEvent {
+            execution_id: "exec-live-guard-1".to_string(),
+            source_wallet: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            market_slug: "market-live-guard".to_string(),
+            token_id: "token-live-guard".to_string(),
+            side: TradeSide::Buy,
+            source_trade_notional_usd: 1_000.0,
+            source_price: 0.5,
+            source_quantity: 2_000.0,
+            source_equity_usd: 100_000.0,
+            expected_edge_bps: 120.0,
+            observed_at: Utc::now(),
+            transaction_hash: None,
+        };
+
+        let client = Client::new();
+        process_fill_event(&ctx, &client, fill_event)
+            .await
+            .expect("process fill event");
+
+        let conn = Connection::open(&db_path_str).expect("open sqlite");
+        let (status, response_json): (String, String) = conn
+            .query_row(
+                "SELECT status, response_json FROM orders WHERE execution_id = ?1 LIMIT 1",
+                ["exec-live-guard-1"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("failed order row");
+        assert_eq!(status, "failed");
+        assert!(response_json.contains("live_mode_requires_execution_api"));
+
+        let (reason, payload_json): (String, String) = conn
+            .query_row(
+                "SELECT reason, payload_json FROM risk_events WHERE execution_id = ?1 ORDER BY created_at DESC LIMIT 1",
+                ["exec-live-guard-1"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("risk event row");
+        assert_eq!(reason, "execution_failed");
+        assert!(payload_json.contains("live_mode_requires_execution_api"));
+    }
 }

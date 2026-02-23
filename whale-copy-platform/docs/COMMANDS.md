@@ -12,6 +12,8 @@
 - `/mode <dry_run|live>`
 - `/risk <conservative|balanced|aggressive>`
 - `/multiplier <value>`
+- `/equity <usd-amount>`
+- `/copy_sells <on|off>`
 - `/caps key=value ...`
 - `/wallet_add <wallet>`
 - `/wallet_remove <wallet>`
@@ -28,6 +30,8 @@
 - `set_mode`
 - `set_risk_profile`
 - `set_multiplier`
+- `set_follower_equity`
+- `set_copy_sells`
 - `set_caps`
 - `add_wallet`
 - `remove_wallet`

@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: whale-copy-platform
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: whale-copy-platform/control-bot-ts/package-lock.json
+
+      - name: Rust tests
+        run: cd engine-rs && cargo test
+
+      - name: TypeScript build and tests
+        run: |
+          cd control-bot-ts
+          npm ci
+          npm run build
+          npm test
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Shell script lint
+        run: shellcheck ops/scripts/*.sh ops/watchdog/*.sh tests/*.sh
+
+  rpc-smoke:
+    name: RPC Smoke
+    runs-on: ubuntu-latest
+    needs: test
+    defaults:
+      run:
+        working-directory: whale-copy-platform
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build engine
+        run: cd engine-rs && cargo build
+
+      - name: Run engine and smoke test
+        run: |
+          set -euo pipefail
+
+          rm -f /tmp/whale-copy-engine.sock
+
+          cd engine-rs
+          cargo run >/tmp/whale-copy-engine.log 2>&1 &
+          ENGINE_PID=$!
+
+          cleanup() {
+            kill "$ENGINE_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for _ in {1..30}; do
+            if [[ -S "/tmp/whale-copy-engine.sock" ]]; then
+              break
+            fi
+            sleep 1
+          done
+
+          if [[ ! -S "/tmp/whale-copy-engine.sock" ]]; then
+            echo "Engine socket was not created in time" >&2
+            tail -n 200 /tmp/whale-copy-engine.log || true
+            exit 1
+          fi
+
+          cd ../tests
+          ENGINE_SOCKET_PATH=/tmp/whale-copy-engine.sock bash ./rpc_smoke.sh

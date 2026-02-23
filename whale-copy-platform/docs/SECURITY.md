@@ -6,6 +6,7 @@
 - No private keys are persisted in SQLite.
 - Telegram control is allowlist-only (`TELEGRAM_ALLOWED_CHAT_IDS`).
 - Every mutating control command is written to `command_audit` with actor chat ID.
+- Live mode blocks execution when `EXECUTION_API_BASE` is unset unless `ALLOW_LIVE_SIMULATION=true` is explicitly enabled.
 
 ## Required operator hardening
 
