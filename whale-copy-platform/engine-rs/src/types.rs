@@ -330,3 +330,145 @@ impl RpcResponse {
         }
     }
 }
+
+// ============================================================================
+// WebSocket Types for Polymarket CLOB
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WsChannel {
+    Trade { market_slug: String },
+    Orderbook { market_slug: String },
+    User { wallet: String },
+}
+
+impl WsChannel {
+    pub fn as_subscribe_string(&self) -> String {
+        match self {
+            Self::Trade { market_slug } => format!("trade:{}", market_slug),
+            Self::Orderbook { market_slug } => format!("orderbook:{}", market_slug),
+            Self::User { wallet } => format!("user:{}", wallet),
+        }
+    }
+
+    pub fn from_subscribe_string(s: &str) -> Option<Self> {
+        let parts: Vec<&str> = s.splitn(2, ':').collect();
+        if parts.len() != 2 {
+            return None;
+        }
+        match parts[0] {
+            "trade" => Some(Self::Trade {
+                market_slug: parts[1].to_string(),
+            }),
+            "orderbook" => Some(Self::Orderbook {
+                market_slug: parts[1].to_string(),
+            }),
+            "user" => Some(Self::User {
+                wallet: parts[1].to_string(),
+            }),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WsMessage {
+    // Control messages
+    Subscribe { channels: Vec<String> },
+    Unsubscribe { channels: Vec<String> },
+    Ping,
+    Pong,
+    
+    // Trade events (what we care about for whale copying)
+    Trade {
+        market_slug: String,
+        transaction_hash: String,
+        timestamp: DateTime<Utc>,
+        trades: Vec<TradeFill>,
+    },
+    
+    // Orderbook updates
+    Orderbook {
+        market_slug: String,
+        asset_id: String,
+        bids: Vec<OrderbookLevel>,
+        asks: Vec<OrderbookLevel>,
+        timestamp: DateTime<Utc>,
+    },
+    
+    // User fill events (our own orders)
+    UserFill {
+        transaction_hash: String,
+        timestamp: DateTime<Utc>,
+        fills: Vec<UserFill>,
+    },
+    
+    // Connection/Error
+    Connected { client_id: String },
+    Error { message: String, code: Option<i32> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradeFill {
+    pub trade_id: String,
+    pub maker_address: String,
+    pub taker_address: String,
+    pub side: TradeSide,
+    pub size: f64,
+    pub price: f64,
+    pub token_id: String,
+    pub timestamp: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrderbookLevel {
+    pub price: f64,
+    pub size: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserFill {
+    pub order_id: String,
+    pub market_slug: String,
+    pub token_id: String,
+    pub side: TradeSide,
+    pub size: f64,
+    pub price: f64,
+    pub fee: f64,
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Internal event emitted by WS client to the engine
+#[derive(Debug, Clone)]
+pub enum WsEvent {
+    Connected,
+    Disconnected { reason: String },
+    Message(WsMessage),
+    Error(String),
+}
+
+/// Configuration for WebSocket client
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WsConfig {
+    pub url: String,
+    pub reconnect_base_ms: u64,
+    pub reconnect_max_ms: u64,
+    pub ping_interval_secs: u64,
+    pub connection_timeout_secs: u64,
+    pub max_consecutive_failures: u32,
+}
+
+impl Default for WsConfig {
+    fn default() -> Self {
+        Self {
+            url: "wss://clob.polymarket.com/ws".to_string(),
+            reconnect_base_ms: 250,
+            reconnect_max_ms: 30_000,
+            ping_interval_secs: 30,
+            connection_timeout_secs: 10,
+            max_consecutive_failures: 10,
+        }
+    }
+}

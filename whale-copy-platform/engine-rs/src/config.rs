@@ -2,7 +2,7 @@ use std::env;
 
 use anyhow::Result;
 
-use crate::types::{EngineMode, RiskProfile, RuntimeSettings};
+use crate::types::{EngineMode, RiskProfile, RuntimeSettings, WsConfig};
 
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
@@ -26,6 +26,8 @@ pub struct EngineConfig {
     pub log_level: String,
     pub command_tail_default: usize,
     pub runtime_settings: RuntimeSettings,
+    pub ws_config: WsConfig,
+    pub use_websocket: bool,
 }
 
 fn parse_bool(name: &str, default: bool) -> bool {
@@ -97,6 +99,18 @@ pub fn load_config() -> Result<EngineConfig> {
         .map(ToOwned::to_owned)
         .collect();
 
+    // WebSocket configuration
+    let mut ws_config = WsConfig::default();
+    ws_config.url = env::var("WS_CLOB_URL")
+        .unwrap_or_else(|_| "wss://clob.polymarket.com/ws".to_string());
+    ws_config.reconnect_base_ms = parse_or("WS_RECONNECT_BASE_MS", 250_u64);
+    ws_config.reconnect_max_ms = parse_or("WS_RECONNECT_MAX_MS", 30_000_u64);
+    ws_config.ping_interval_secs = parse_or("WS_PING_INTERVAL_SECS", 30_u64);
+    ws_config.connection_timeout_secs = parse_or("WS_CONNECTION_TIMEOUT_SECS", 10_u64);
+    ws_config.max_consecutive_failures = parse_or("WS_MAX_CONSECUTIVE_FAILURES", 10_u32);
+
+    let use_websocket = parse_bool("USE_WEBSOCKET", true);
+
     if runtime_settings.multiplier <= 0.0 {
         anyhow::bail!("COPY_MULTIPLIER must be > 0");
     }
@@ -143,6 +157,8 @@ pub fn load_config() -> Result<EngineConfig> {
         log_level: env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
         command_tail_default: parse_or("COMMAND_TAIL_DEFAULT", 50_usize),
         runtime_settings,
+        ws_config,
+        use_websocket,
     };
 
     if cfg.fetch_interval_ms < 300 {

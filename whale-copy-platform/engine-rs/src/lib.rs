@@ -5,3 +5,4 @@ pub mod rpc;
 pub mod signals;
 pub mod state;
 pub mod types;
+pub mod ws_client;

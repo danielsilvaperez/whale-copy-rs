@@ -1,13 +1,13 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
 use reqwest::Client;
 use serde_json::json;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{EnvFilter, prelude::*};
 use whale_copy_engine::config::{EngineConfig, load_config};
@@ -19,8 +19,9 @@ use whale_copy_engine::signals::{
 };
 use whale_copy_engine::state::EngineState;
 use whale_copy_engine::types::{
-    EventClass, RiskDecision, RuntimeSettings, SourceFillEvent, TradeSide,
+    EventClass, RiskDecision, RuntimeSettings, SourceFillEvent, TradeSide, WsChannel, WsEvent, WsMessage,
 };
+use whale_copy_engine::ws_client::{WsClient, WsCommand, trade_fill_to_source_event};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -51,8 +52,51 @@ async fn main() -> Result<()> {
         .build()
         .context("building reqwest client")?;
 
+    // Create WebSocket event channel
+    let (ws_event_tx, ws_event_rx) = mpsc::channel::<WsEvent>(1000);
+    let (ws_client, ws_command_tx) = WsClient::new(config.ws_config.clone(), ws_event_tx);
+
     let heartbeat_task = tokio::spawn(heartbeat_loop(ctx.clone()));
-    let signal_task = tokio::spawn(signal_loop(ctx.clone(), client.clone()));
+
+    // Choose between WebSocket and REST polling for signals
+    let (signal_task, ws_task): (
+        tokio::task::JoinHandle<Result<()>>,
+        Option<tokio::task::JoinHandle<()>>,
+    ) = if config.use_websocket {
+        tracing::info!("Using WebSocket for real-time signal ingestion");
+
+        // Start WebSocket client
+        let ws_handle = tokio::spawn(ws_client.run());
+
+        // Subscribe to tracked wallets' trade channels
+        let wallets: Vec<String> = {
+            let state = ctx.state.read().await;
+            state.tracked_wallets.iter().cloned().collect()
+        };
+
+        let channels: Vec<WsChannel> = wallets
+            .iter()
+            .map(|w| WsChannel::User { wallet: w.clone() })
+            .collect();
+
+        if !channels.is_empty() {
+            let _ = ws_command_tx.send(WsCommand::Subscribe(channels)).await;
+        }
+
+        // Spawn WebSocket event processor
+        let ws_event_task = tokio::spawn(ws_event_processor(
+            ctx.clone(),
+            client.clone(),
+            ws_event_rx,
+            ws_command_tx.clone(),
+        ));
+
+        (ws_event_task, Some(ws_handle))
+    } else {
+        tracing::info!("Using REST polling for signal ingestion");
+        (tokio::spawn(signal_loop(ctx.clone(), client.clone())), None)
+    };
+
     let rotation_task = tokio::spawn(rotation_loop(ctx.clone(), client.clone()));
     let log_retention_task = tokio::spawn(log_retention_loop(
         config.log_dir.clone(),
@@ -67,11 +111,17 @@ async fn main() -> Result<()> {
         .context("listening for ctrl-c")?;
     tracing::info!("shutdown signal received");
 
+    // Send shutdown to WebSocket if running
+    let _ = ws_command_tx.send(WsCommand::Shutdown).await;
+
     heartbeat_task.abort();
     signal_task.abort();
     rotation_task.abort();
     log_retention_task.abort();
     rpc_task.abort();
+    if let Some(ws) = ws_task {
+        ws.abort();
+    }
 
     let _ = tokio::join!(
         heartbeat_task,
@@ -81,6 +131,159 @@ async fn main() -> Result<()> {
         rpc_task
     );
     tracing::info!("engine stopped");
+    Ok(())
+}
+
+/// Process WebSocket events and convert to signals
+async fn ws_event_processor(
+    ctx: AppContext,
+    client: Client,
+    mut event_rx: mpsc::Receiver<WsEvent>,
+    command_tx: mpsc::Sender<WsCommand>,
+) -> Result<()> {
+    let mut last_wallet_sync = Instant::now();
+    let wallet_sync_interval = Duration::from_secs(60);
+
+    while let Some(event) = event_rx.recv().await {
+        match event {
+            WsEvent::Connected => {
+                tracing::info!("WebSocket connected, syncing subscriptions");
+
+                // Re-subscribe to current tracked wallets
+                let wallets: Vec<String> = {
+                    let state = ctx.state.read().await;
+                    state.tracked_wallets.iter().cloned().collect()
+                };
+
+                let channels: Vec<WsChannel> = wallets
+                    .iter()
+                    .map(|w| WsChannel::User { wallet: w.clone() })
+                    .collect();
+
+                if !channels.is_empty() {
+                    let _ = command_tx.send(WsCommand::Subscribe(channels)).await;
+                }
+            }
+
+            WsEvent::Disconnected { reason } => {
+                tracing::warn!(reason = %reason, "WebSocket disconnected, will reconnect");
+            }
+
+            WsEvent::Message(msg) => {
+                match msg {
+                    WsMessage::Trade { market_slug, trades, .. } => {
+                        // Get current tracked wallets
+                        let tracked: BTreeSet<String> = {
+                            let state = ctx.state.read().await;
+                            state.tracked_wallets.clone()
+                        };
+
+                        // Process each trade that involves a tracked wallet
+                        for trade in trades {
+                            let is_maker_tracked = tracked.contains(&trade.maker_address);
+                            let is_taker_tracked = tracked.contains(&trade.taker_address);
+
+                            if is_maker_tracked || is_taker_tracked {
+                                // Use the tracked wallet as the source
+                                let source_wallet = if is_taker_tracked {
+                                    &trade.taker_address
+                                } else {
+                                    &trade.maker_address
+                                };
+
+                                let fallback_equity = ctx.config.source_equity_fallback_usd;
+
+                                if let Some(fill_event) =
+                                    trade_fill_to_source_event(&market_slug, &trade, fallback_equity)
+                                {
+                                    // Adjust source wallet to the tracked one
+                                    let mut fill_event = fill_event;
+                                    fill_event.source_wallet = source_wallet.clone();
+
+                                    if let Err(e) =
+                                        process_fill_event(&ctx, &client, fill_event).await
+                                    {
+                                        tracing::warn!(error = %e, "Failed to process WS fill event");
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    WsMessage::UserFill { fills, .. } => {
+                        // Process our own fill events for position tracking
+                        for fill in fills {
+                            tracing::info!(
+                                order_id = %fill.order_id,
+                                market = %fill.market_slug,
+                                side = %fill.side.as_str(),
+                                size = fill.size,
+                                price = fill.price,
+                                "Own order filled"
+                            );
+
+                            // Update position tracking
+                            let mut state = ctx.state.write().await;
+                            let exposure = state
+                                .market_exposure_usd
+                                .entry(fill.market_slug.clone())
+                                .or_insert(0.0);
+
+                            match fill.side {
+                                TradeSide::Buy => {
+                                    *exposure += fill.size * fill.price;
+                                }
+                                TradeSide::Sell => {
+                                    *exposure = (*exposure - fill.size * fill.price).max(0.0);
+                                }
+                            }
+                        }
+                    }
+
+                    WsMessage::Orderbook { market_slug, bids, asks, .. } => {
+                        // Could use for price improvement or slippage estimation
+                        tracing::trace!(
+                            market = %market_slug,
+                            bid_count = bids.len(),
+                            ask_count = asks.len(),
+                            "Orderbook update"
+                        );
+                    }
+
+                    WsMessage::Error { message, code } => {
+                        tracing::error!(message = %message, ?code, "WebSocket error message");
+                    }
+
+                    _ => {}
+                }
+            }
+
+            WsEvent::Error(error) => {
+                tracing::error!(error = %error, "WebSocket client error");
+            }
+        }
+
+        // Periodic wallet list sync
+        if last_wallet_sync.elapsed() > wallet_sync_interval {
+            last_wallet_sync = Instant::now();
+
+            let current_wallets: Vec<String> = {
+                let state = ctx.state.read().await;
+                state.tracked_wallets.iter().cloned().collect()
+            };
+
+            // Subscribe to any new wallets
+            let channels: Vec<WsChannel> = current_wallets
+                .iter()
+                .map(|w| WsChannel::User { wallet: w.clone() })
+                .collect();
+
+            if !channels.is_empty() {
+                let _ = command_tx.send(WsCommand::Subscribe(channels)).await;
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -678,6 +881,7 @@ mod tests {
     use tokio::sync::RwLock;
 
     use super::*;
+    use whale_copy_engine::types::WsConfig;
 
     fn test_engine_config(db_path: String) -> EngineConfig {
         EngineConfig {
@@ -701,6 +905,8 @@ mod tests {
             log_level: "info".to_string(),
             command_tail_default: 50,
             runtime_settings: RuntimeSettings::default(),
+            use_websocket: true,
+            ws_config: WsConfig::default(),
         }
     }
 

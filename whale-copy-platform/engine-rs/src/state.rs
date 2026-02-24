@@ -4,7 +4,7 @@ use chrono::{NaiveDate, Utc};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::performance::{PerformanceTracker, AutoStopConfig};
+use crate::performance::PerformanceTracker;
 use crate::types::{
     EngineHealthSnapshot, EventClass, EventEnvelope, RotationSuggestion, RuntimeSettings,
 };

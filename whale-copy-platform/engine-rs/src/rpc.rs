@@ -99,6 +99,13 @@ struct SetCopySellsParams {
     copy_sells: bool,
 }
 
+#[derive(Debug, Deserialize)]
+struct HeartbeatParams {
+    service: String,
+    status: Option<String>,
+    details: Option<Value>,
+}
+
 pub async fn run_rpc_server(ctx: AppContext) -> Result<()> {
     let socket_path = ctx.config.socket_path.clone();
     if Path::new(&socket_path).exists() {
@@ -1010,6 +1017,8 @@ mod tests {
                 log_level: "info".to_string(),
                 command_tail_default: 50,
                 runtime_settings: RuntimeSettings::default(),
+                use_websocket: true,
+                ws_config: crate::types::WsConfig::default(),
             },
             started_at: Utc::now(),
         }
@@ -1056,6 +1065,8 @@ mod tests {
                 log_level: "info".to_string(),
                 command_tail_default: 50,
                 runtime_settings: RuntimeSettings::default(),
+                use_websocket: true,
+                ws_config: crate::types::WsConfig::default(),
             },
             started_at: Utc::now(),
         };
