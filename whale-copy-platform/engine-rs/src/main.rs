@@ -203,9 +203,13 @@ async fn process_fill_event(
     client: &Client,
     fill_event: SourceFillEvent,
 ) -> Result<()> {
-    let (settings, market_exposure, daily_notional, open_positions, is_duplicate) = {
+    let (settings, market_exposure, daily_notional, open_positions, is_duplicate, auto_stop_check) = {
         let mut state = ctx.state.write().await;
         let duplicate = !state.dedupe_cache.add(&fill_event.execution_id);
+        
+        // Check if wallet has been auto-stopped
+        let auto_stop_reason = state.performance_tracker.check_auto_stop(&fill_event.source_wallet);
+        
         (
             state.settings.clone(),
             *state
@@ -215,10 +219,55 @@ async fn process_fill_event(
             state.daily_notional_usd,
             state.open_positions_count,
             duplicate,
+            auto_stop_reason,
         )
     };
 
     if is_duplicate {
+        return Ok(());
+    }
+
+    // Check auto-stop before processing
+    if let Some(reason) = auto_stop_check {
+        let payload = json!({
+            "execution_id": fill_event.execution_id,
+            "wallet": fill_event.source_wallet,
+            "reason": reason.message(),
+        });
+        
+        ctx.db
+            .insert_risk_event(
+                Some(&fill_event.execution_id),
+                "block",
+                "auto_stop_triggered",
+                &payload,
+            )
+            .await?;
+
+        record_event(
+            ctx,
+            EventClass::Risk,
+            "signal_blocked_auto_stop",
+            payload,
+            Some(&fill_event.execution_id),
+            Some(&fill_event.source_wallet),
+            Some(&fill_event.market_slug),
+        )
+        .await?;
+
+        // Mark wallet as stopped if not already
+        {
+            let mut state = ctx.state.write().await;
+            if !state.performance_tracker.is_stopped(&fill_event.source_wallet) {
+                state.performance_tracker.mark_stopped(&fill_event.source_wallet);
+                tracing::warn!(
+                    wallet = %fill_event.source_wallet,
+                    reason = %reason.message(),
+                    "Auto-stopped copying wallet due to poor performance"
+                );
+            }
+        }
+
         return Ok(());
     }
 
@@ -373,9 +422,29 @@ async fn process_fill_event(
         .await?;
 
     if result.success {
+        // Calculate P&L for performance tracking (simplified - in real implementation
+        // you'd track actual fill price vs entry price for closed positions)
+        let estimated_pnl = if let Some(avg_price) = result.average_fill_price {
+            let price_diff = avg_price - allowed_signal.source_price;
+            let pnl = price_diff * result.filled_quantity;
+            match allowed_signal.side {
+                TradeSide::Buy => -pnl, // Buy = paying, negative until sold
+                TradeSide::Sell => pnl,  // Sell = receiving
+            }
+        } else {
+            0.0
+        };
+
         {
             let mut state = ctx.state.write().await;
             state.daily_notional_usd += allowed_signal.copy_notional_usd;
+            
+            // Record trade performance
+            state.performance_tracker.record_trade(
+                &allowed_signal.source_wallet,
+                estimated_pnl,
+            );
+            
             let exposure = state
                 .market_exposure_usd
                 .entry(allowed_signal.market_slug.clone())
@@ -406,6 +475,7 @@ async fn process_fill_event(
                 "latency_ms": result.latency_ms,
                 "attempts": result.attempts,
                 "message": result.message,
+                "estimated_pnl": estimated_pnl,
             }),
             Some(&intent.execution_id),
             Some(&allowed_signal.source_wallet),

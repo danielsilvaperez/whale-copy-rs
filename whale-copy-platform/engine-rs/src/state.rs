@@ -4,6 +4,7 @@ use chrono::{NaiveDate, Utc};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::performance::{PerformanceTracker, AutoStopConfig};
 use crate::types::{
     EngineHealthSnapshot, EventClass, EventEnvelope, RotationSuggestion, RuntimeSettings,
 };
@@ -55,10 +56,12 @@ pub struct EngineState {
     pub last_heartbeat_at: chrono::DateTime<chrono::Utc>,
     pub last_rotation_at: Option<chrono::DateTime<chrono::Utc>>,
     pub current_trading_day: NaiveDate,
+    pub performance_tracker: PerformanceTracker,
 }
 
 impl EngineState {
     pub fn new(settings: RuntimeSettings, tracked_wallets: BTreeSet<String>) -> Self {
+        let auto_stop_config = settings.auto_stop_config.clone();
         Self {
             settings,
             tracked_wallets,
@@ -71,6 +74,7 @@ impl EngineState {
             last_heartbeat_at: Utc::now(),
             last_rotation_at: None,
             current_trading_day: Utc::now().date_naive(),
+            performance_tracker: PerformanceTracker::new(auto_stop_config),
         }
     }
 

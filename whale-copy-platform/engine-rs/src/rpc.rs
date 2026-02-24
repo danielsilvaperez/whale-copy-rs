@@ -77,10 +77,16 @@ struct TailParams {
 }
 
 #[derive(Debug, Deserialize)]
-struct HeartbeatParams {
-    service: String,
-    status: Option<String>,
-    details: Option<Value>,
+struct SetAutoStopParams {
+    enabled: Option<bool>,
+    min_win_rate_percent: Option<f64>,
+    max_drawdown_usd: Option<f64>,
+    min_trades_before_stop: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResumeWalletParams {
+    wallet: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -764,6 +770,95 @@ async fn process_rpc_method(
                 .with_context(|| format!("writing heartbeat for {}", params.service))?;
 
             Ok((json!({ "ack": true }), None))
+        }
+        "get_performance" => {
+            let state = ctx.state.read().await;
+            let performances: Vec<_> = state.performance_tracker.get_summary()
+                .into_iter()
+                .map(|p| json!({
+                    "wallet": p.wallet,
+                    "total_trades": p.total_trades,
+                    "win_rate": p.win_rate,
+                    "total_pnl_usd": p.total_pnl_usd,
+                    "max_drawdown_usd": p.max_drawdown_usd,
+                    "avg_trade_pnl_usd": p.avg_trade_pnl_usd,
+                }))
+                .collect();
+            
+            let stopped_wallets: Vec<_> = state.performance_tracker.get_stopped_wallets()
+                .iter()
+                .map(|(w, t)| json!({ "wallet": w, "stopped_at": t }))
+                .collect();
+            
+            Ok((json!({ 
+                "performances": performances,
+                "stopped_wallets": stopped_wallets,
+                "auto_stop_config": state.performance_tracker.get_auto_stop_config(),
+            }), None))
+        }
+        "set_auto_stop" => {
+            let params: SetAutoStopParams = parse_params(req.params)?;
+            
+            let (old_config, new_config) = {
+                let mut state = ctx.state.write().await;
+                let old = state.performance_tracker.get_auto_stop_config().clone();
+                
+                let mut new = old.clone();
+                if let Some(v) = params.enabled {
+                    new.enabled = v;
+                }
+                if let Some(v) = params.min_win_rate_percent {
+                    new.min_win_rate_percent = v;
+                }
+                if let Some(v) = params.max_drawdown_usd {
+                    new.max_drawdown_usd = v;
+                }
+                if let Some(v) = params.min_trades_before_stop {
+                    new.min_trades_before_stop = v;
+                }
+                
+                state.performance_tracker.set_auto_stop_config(new.clone());
+                state.settings.auto_stop_config = new.clone();
+                (old, new)
+            };
+            
+            ctx.db.save_runtime_settings(&ctx.state.read().await.settings).await?;
+            
+            Ok((json!({ "auto_stop_config": new_config }), Some(AuditRecord {
+                command: method.to_string(),
+                old_value: Some(json!(old_config)),
+                new_value: Some(json!(new_config)),
+                result: "ok".to_string(),
+                actor_chat_id: req.actor_chat_id,
+            })))
+        }
+        "resume_wallet" => {
+            let params: ResumeWalletParams = parse_params(req.params)?;
+            let normalized = normalize_wallet(&params.wallet)
+                .ok_or_else(|| anyhow!("wallet must be a valid 0x-prefixed EVM address"))?;
+            
+            let was_stopped = {
+                let mut state = ctx.state.write().await;
+                state.performance_tracker.resume_wallet(&normalized)
+            };
+            
+            let event = {
+                let mut state = ctx.state.write().await;
+                state.push_event(
+                    EventClass::Info,
+                    "wallet_resumed",
+                    json!({ "wallet": normalized, "was_stopped": was_stopped }),
+                )
+            };
+            ctx.db.insert_event(&event, None, Some(&normalized), None).await?;
+            
+            Ok((json!({ "wallet": normalized, "was_stopped": was_stopped }), Some(AuditRecord {
+                command: method.to_string(),
+                old_value: None,
+                new_value: None,
+                result: if was_stopped { "ok" } else { "not_stopped" }.to_string(),
+                actor_chat_id: req.actor_chat_id,
+            })))
         }
         _ => anyhow::bail!("unsupported rpc method '{method}'"),
     }

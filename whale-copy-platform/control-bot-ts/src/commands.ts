@@ -99,6 +99,61 @@ function formatLogs(value: unknown): string {
   return lines.join("\n");
 }
 
+function formatPerformance(value: unknown): string {
+  const data = asObject<{ 
+    performances?: Array<{
+      wallet: string;
+      total_trades: number;
+      win_rate: number;
+      total_pnl_usd: number;
+      max_drawdown_usd: number;
+      avg_trade_pnl_usd: number;
+    }>;
+    stopped_wallets?: Array<{ wallet: string; stopped_at: string }>;
+    auto_stop_config?: {
+      enabled: boolean;
+      min_win_rate_percent: number;
+      max_drawdown_usd: number;
+      min_trades_before_stop: number;
+    };
+  }>(value);
+  
+  const lines = ["📊 Wallet Performance"];
+  
+  if (data.auto_stop_config) {
+    lines.push("");
+    lines.push("Auto-Stop Config:");
+    lines.push(`  Enabled: ${data.auto_stop_config.enabled}`);
+    lines.push(`  Min Win Rate: ${data.auto_stop_config.min_win_rate_percent}%`);
+    lines.push(`  Max Drawdown: $${data.auto_stop_config.max_drawdown_usd}`);
+    lines.push(`  Min Trades Before Stop: ${data.auto_stop_config.min_trades_before_stop}`);
+  }
+  
+  if (data.stopped_wallets && data.stopped_wallets.length > 0) {
+    lines.push("");
+    lines.push(`🛑 Stopped Wallets (${data.stopped_wallets.length}):`);
+    for (const w of data.stopped_wallets) {
+      lines.push(`  ${w.wallet.slice(0, 20)}... stopped at ${w.stopped_at}`);
+    }
+  }
+  
+  if (data.performances && data.performances.length > 0) {
+    lines.push("");
+    lines.push("Wallet Stats:");
+    for (const p of data.performances) {
+      lines.push(`  ${p.wallet.slice(0, 20)}...`);
+      lines.push(`    Trades: ${p.total_trades} | Win Rate: ${p.win_rate.toFixed(1)}%`);
+      lines.push(`    P&L: $${p.total_pnl_usd.toFixed(2)} | Avg: $${p.avg_trade_pnl_usd.toFixed(2)}`);
+      lines.push(`    Max DD: $${p.max_drawdown_usd.toFixed(2)}`);
+    }
+  } else {
+    lines.push("");
+    lines.push("No performance data yet.");
+  }
+  
+  return lines.join("\n");
+}
+
 function helpText(): string {
   return [
     "Commands:",
@@ -122,6 +177,9 @@ function helpText(): string {
     "/approve <suggestion_id>",
     "/reject <suggestion_id>",
     "/logs [limit]",
+    "/performance - Show wallet performance stats",
+    "/auto_stop [enabled] [min_win_rate] [max_drawdown] [min_trades] - Configure auto-stop",
+    "/resume_wallet <address> - Resume copying a stopped wallet",
   ].join("\n");
 }
 
@@ -252,6 +310,34 @@ export async function handleCommand(
       }
       const value = await rpc.request("set_copy_sells", { copy_sells: toggle === "on" }, chatId);
       return `Copy sells updated: ${JSON.stringify(value)}`;
+    }
+    case "performance": {
+      const value = await rpc.request("get_performance", {}, chatId);
+      return formatPerformance(value);
+    }
+    case "auto_stop": {
+      const params: Record<string, unknown> = {};
+      if (args[0]) params.enabled = args[0] === "true" || args[0] === "on";
+      if (args[1]) params.min_win_rate_percent = parseFloat(args[1]);
+      if (args[2]) params.max_drawdown_usd = parseFloat(args[2]);
+      if (args[3]) params.min_trades_before_stop = parseInt(args[3], 10);
+      
+      if (Object.keys(params).length === 0) {
+        // Just get current config
+        const value = await rpc.request("get_performance", {}, chatId);
+        return `Current auto-stop config: ${JSON.stringify((value as { auto_stop_config?: unknown }).auto_stop_config, null, 2)}`;
+      }
+      
+      const value = await rpc.request("set_auto_stop", params, chatId);
+      return `Auto-stop config updated: ${JSON.stringify(value)}`;
+    }
+    case "resume_wallet": {
+      const wallet = args[0];
+      if (!wallet) {
+        return "Usage: /resume_wallet <0x...>";
+      }
+      const value = await rpc.request("resume_wallet", { wallet }, chatId);
+      return `Wallet resumed: ${JSON.stringify(value)}`;
     }
     case "logs": {
       const limitRaw = Number(args[0]);

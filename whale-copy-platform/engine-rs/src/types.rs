@@ -79,6 +79,8 @@ impl Default for Caps {
     }
 }
 
+use crate::performance::AutoStopConfig;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeSettings {
     pub mode: EngineMode,
@@ -92,6 +94,7 @@ pub struct RuntimeSettings {
     pub limit_price_offset: f64,
     pub copy_sells: bool,
     pub max_active_wallets: usize,
+    pub auto_stop_config: AutoStopConfig,
 }
 
 impl Default for RuntimeSettings {
@@ -108,6 +111,7 @@ impl Default for RuntimeSettings {
             limit_price_offset: 0.01,
             copy_sells: true,
             max_active_wallets: 5,
+            auto_stop_config: AutoStopConfig::default(),
         }
     }
 }
