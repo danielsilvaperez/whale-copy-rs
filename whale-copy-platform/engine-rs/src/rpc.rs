@@ -867,6 +867,70 @@ async fn process_rpc_method(
                 actor_chat_id: req.actor_chat_id,
             })))
         }
+        "get_pnl_summary" => {
+            let state = ctx.state.read().await;
+            let fee_bps = state.settings.fee_bps;
+            
+            // Get current prices from market exposure (simplified - would fetch from API in production)
+            let current_prices: std::collections::HashMap<String, f64> = state
+                .market_exposure_usd
+                .iter()
+                .map(|(k, v)| (k.clone(), *v))
+                .collect();
+            
+            let summary = state.pnl_tracker.generate_summary(&current_prices, fee_bps);
+            
+            Ok((json!({ "pnl_summary": summary }), None))
+        }
+        "get_pnl_daily" => {
+            let state = ctx.state.read().await;
+            let daily: Vec<_> = state.pnl_tracker.daily_pnls.values().cloned().collect();
+            
+            Ok((json!({ "daily_pnl": daily }), None))
+        }
+        "get_recent_trades" => {
+            let params: TailParams = parse_params(req.params)?;
+            let limit = params.limit.filter(|v| *v > 0).unwrap_or(10).min(100);
+            
+            let state = ctx.state.read().await;
+            let recent: Vec<_> = state.pnl_tracker.recent_trades(limit)
+                .into_iter()
+                .map(|t| json!({
+                    "id": t.id,
+                    "market_slug": t.market_slug,
+                    "side": t.side.as_str(),
+                    "entry_price": t.entry_price,
+                    "exit_price": t.exit_price,
+                    "size": t.size,
+                    "fees_paid": t.fees_paid,
+                    "entry_time": t.entry_time,
+                    "exit_time": t.exit_time,
+                }))
+                .collect();
+            
+            Ok((json!({ "trades": recent }), None))
+        }
+        "get_best_worst_trades" => {
+            let state = ctx.state.read().await;
+            let (best, worst) = state.pnl_tracker.best_and_worst_trades();
+            
+            let result = json!({
+                "best": best.map(|t| json!({
+                    "market_slug": t.market_slug,
+                    "net_pnl": t.net_pnl,
+                    "return_pct": t.return_pct,
+                    "closed_at": t.closed_at,
+                })),
+                "worst": worst.map(|t| json!({
+                    "market_slug": t.market_slug,
+                    "net_pnl": t.net_pnl,
+                    "return_pct": t.return_pct,
+                    "closed_at": t.closed_at,
+                })),
+            });
+            
+            Ok((result, None))
+        }
         _ => anyhow::bail!("unsupported rpc method '{method}'"),
     }
 }

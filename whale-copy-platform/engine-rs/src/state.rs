@@ -5,6 +5,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::performance::PerformanceTracker;
+use crate::pnl::PnLTracker;
 use crate::types::{
     EngineHealthSnapshot, EventClass, EventEnvelope, RotationSuggestion, RuntimeSettings,
 };
@@ -57,6 +58,7 @@ pub struct EngineState {
     pub last_rotation_at: Option<chrono::DateTime<chrono::Utc>>,
     pub current_trading_day: NaiveDate,
     pub performance_tracker: PerformanceTracker,
+    pub pnl_tracker: PnLTracker,
 }
 
 impl EngineState {
@@ -75,6 +77,7 @@ impl EngineState {
             last_rotation_at: None,
             current_trading_day: Utc::now().date_naive(),
             performance_tracker: PerformanceTracker::new(auto_stop_config),
+            pnl_tracker: PnLTracker::new(),
         }
     }
 

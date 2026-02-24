@@ -1,6 +1,7 @@
 pub mod config;
 pub mod db;
 pub mod performance;
+pub mod pnl;
 pub mod reconciliation;
 pub mod rpc;
 pub mod signals;
