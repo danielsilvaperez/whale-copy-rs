@@ -1019,6 +1019,7 @@ mod tests {
                 runtime_settings: RuntimeSettings::default(),
                 use_websocket: true,
                 ws_config: crate::types::WsConfig::default(),
+                reconciliation_config: crate::reconciliation::ReconciliationConfig::default(),
             },
             started_at: Utc::now(),
         }
@@ -1067,6 +1068,7 @@ mod tests {
                 runtime_settings: RuntimeSettings::default(),
                 use_websocket: true,
                 ws_config: crate::types::WsConfig::default(),
+                reconciliation_config: crate::reconciliation::ReconciliationConfig::default(),
             },
             started_at: Utc::now(),
         };

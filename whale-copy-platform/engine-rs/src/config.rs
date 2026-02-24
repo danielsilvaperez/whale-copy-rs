@@ -3,6 +3,7 @@ use std::env;
 use anyhow::Result;
 
 use crate::types::{EngineMode, RiskProfile, RuntimeSettings, WsConfig};
+use crate::reconciliation::ReconciliationConfig;
 
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
@@ -28,6 +29,7 @@ pub struct EngineConfig {
     pub runtime_settings: RuntimeSettings,
     pub ws_config: WsConfig,
     pub use_websocket: bool,
+    pub reconciliation_config: ReconciliationConfig,
 }
 
 fn parse_bool(name: &str, default: bool) -> bool {
@@ -111,6 +113,17 @@ pub fn load_config() -> Result<EngineConfig> {
 
     let use_websocket = parse_bool("USE_WEBSOCKET", true);
 
+    // Reconciliation configuration
+    let mut reconciliation_config = ReconciliationConfig::default();
+    reconciliation_config.interval_secs = parse_or("RECONCILIATION_INTERVAL_SECS", 300_u64);
+    reconciliation_config.warning_threshold_pct = parse_or("RECONCILIATION_WARNING_PCT", 5.0_f64);
+    reconciliation_config.critical_threshold_pct = parse_or("RECONCILIATION_CRITICAL_PCT", 10.0_f64);
+    reconciliation_config.auto_correct = parse_bool("RECONCILIATION_AUTO_CORRECT", false);
+    reconciliation_config.pause_on_critical = parse_bool("RECONCILIATION_PAUSE_ON_CRITICAL", true);
+    if let Some(url) = env::var("RECONCILIATION_API_URL").ok().filter(|v| !v.is_empty()) {
+        reconciliation_config.positions_api_url = url;
+    }
+
     if runtime_settings.multiplier <= 0.0 {
         anyhow::bail!("COPY_MULTIPLIER must be > 0");
     }
@@ -159,6 +172,7 @@ pub fn load_config() -> Result<EngineConfig> {
         runtime_settings,
         ws_config,
         use_websocket,
+        reconciliation_config,
     };
 
     if cfg.fetch_interval_ms < 300 {

@@ -21,6 +21,7 @@ use whale_copy_engine::state::EngineState;
 use whale_copy_engine::types::{
     EventClass, RiskDecision, RuntimeSettings, SourceFillEvent, TradeSide, WsChannel, WsEvent, WsMessage,
 };
+use whale_copy_engine::reconciliation::reconciliation_loop;
 use whale_copy_engine::ws_client::{WsClient, WsCommand, trade_fill_to_source_event};
 
 #[tokio::main]
@@ -102,6 +103,16 @@ async fn main() -> Result<()> {
         config.log_dir.clone(),
         config.log_retention_days,
     ));
+    
+    // Start position reconciliation loop
+    let reconciliation_task = tokio::spawn(reconciliation_loop(
+        ctx.state.clone(),
+        client.clone(),
+        config.reconciliation_config.clone(),
+        std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new())),
+        config.execution_api_base.clone(),
+    ));
+    
     let rpc_task = tokio::spawn(run_rpc_server_with_backoff(ctx.clone()));
 
     tracing::info!("engine started");
@@ -118,6 +129,7 @@ async fn main() -> Result<()> {
     signal_task.abort();
     rotation_task.abort();
     log_retention_task.abort();
+    reconciliation_task.abort();
     rpc_task.abort();
     if let Some(ws) = ws_task {
         ws.abort();
@@ -128,6 +140,7 @@ async fn main() -> Result<()> {
         signal_task,
         rotation_task,
         log_retention_task,
+        reconciliation_task,
         rpc_task
     );
     tracing::info!("engine stopped");
@@ -907,6 +920,7 @@ mod tests {
             runtime_settings: RuntimeSettings::default(),
             use_websocket: true,
             ws_config: WsConfig::default(),
+            reconciliation_config: whale_copy_engine::reconciliation::ReconciliationConfig::default(),
         }
     }
 
